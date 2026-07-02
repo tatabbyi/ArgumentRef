@@ -5,7 +5,6 @@ services:
     rootDir: backend
     plan: free
     healthCheckPath: /health
-    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
