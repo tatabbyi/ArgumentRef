@@ -103,7 +103,9 @@ void main() {
       await _bootApp(tester);
 
       expect(find.byType(WelcomeScreen), findsOneWidget);
-      expect(find.textContaining('Welcome back'), findsOneWidget);
+      // The 3b "Clean & Airy" setup screen: ref greeting + big heading.
+      expect(find.textContaining('signed in'), findsOneWidget);
+      expect(find.textContaining('Who’s talking'), findsOneWidget);
       expect(find.text('Start session'), findsOneWidget);
       // Previously-used names are offered as quick picks.
       expect(find.text('Sam'), findsWidgets);

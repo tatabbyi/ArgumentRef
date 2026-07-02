@@ -148,6 +148,9 @@ class RefPrimaryButton extends StatelessWidget {
     required this.onPressed,
     this.expand = true,
     this.color = RefPalette.ink,
+    this.borderRadius = 16,
+    this.fontSize = 16,
+    this.verticalPadding = 15,
   });
 
   final String label;
@@ -158,23 +161,32 @@ class RefPrimaryButton extends StatelessWidget {
   /// destructive action like ending a session.
   final Color color;
 
+  /// Corner radius of the pill.
+  final double borderRadius;
+
+  /// Label size — the "Clean & Airy" (3b) call-to-action runs a touch larger.
+  final double fontSize;
+
+  /// Vertical padding, i.e. the pill's height above/below the label.
+  final double verticalPadding;
+
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
     return Material(
       color: enabled ? color : color.withValues(alpha: 0.22),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(borderRadius),
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(borderRadius),
         child: Container(
           width: expand ? double.infinity : null,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: verticalPadding),
           alignment: Alignment.center,
           child: Text(
             label,
             style: zilla(
-              size: 16,
+              size: fontSize,
               weight: FontWeight.w600,
               color: RefPalette.cream.withValues(alpha: enabled ? 1 : 0.6),
               letterSpacing: 0.3,
