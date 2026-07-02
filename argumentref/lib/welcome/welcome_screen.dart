@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../center_ref/center_ref_screen.dart';
 import '../center_ref/referee_guide.dart';
 import '../data/profile_store.dart';
 import '../models/user_profile.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../ui/ref_theme.dart';
+import 'calibration_screen.dart';
 
 /// The landing surface shown every time the app opens (once onboarding is done),
 /// built to the **3b "Clean & Airy"** design direction: usability-first, no
@@ -66,13 +66,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     final updated = widget.profile.withRecentNames([_a, _b]);
     widget.store.save(updated);
     widget.onProfileChanged(updated);
+    // Calibrate each voice first, then the calibration screen hands off to the
+    // live referee.
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: RefPalette.cream,
-          // Live mode: capture the mic and referee from real transcripts.
-          body: CenterRefScreen(leftName: _a, rightName: _b, live: true),
-        ),
+        builder: (_) => CalibrationScreen(leftName: _a, rightName: _b),
       ),
     );
   }
