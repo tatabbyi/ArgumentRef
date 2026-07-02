@@ -16,6 +16,7 @@ import {
   type Transcriber,
 } from '../transcription/deepgramTranscriber.js';
 import { ClaimDetector } from '../claims/claimDetector.js';
+import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
@@ -118,6 +119,7 @@ async function handleAudioConnection(
     audio,
   });
   const claimDetector = new ClaimDetector();
+  const factCheckService = createFactCheckService(config);
   const speakerLabeler = new SpeakerLabeler({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -136,6 +138,9 @@ async function handleAudioConnection(
         const claim = claimDetector.detect(labelled.event);
         if (claim) {
           sendEvent(webSocket, claim);
+          factCheckService.checkClaim(claim, (factCheckEvent) => {
+            sendEvent(webSocket, factCheckEvent);
+          });
         }
       }
 

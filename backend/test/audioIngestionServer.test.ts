@@ -20,6 +20,11 @@ describe('audio ingestion websocket', () => {
       maxAudioChunkBytes: 1024 * 1024,
       deepgramModel: 'nova-3',
       deepgramLanguage: 'en-US',
+      factCheckEnabled: false,
+      factCheckProvider: 'google-fact-check',
+      googleFactCheckLanguageCode: 'en-US',
+      googleFactCheckPageSize: 3,
+      factCheckMaxClaimsPerSession: 5,
     });
     port = await server.listen();
   });

@@ -8,6 +8,12 @@ export interface AppConfig {
   deepgramApiKey?: string;
   deepgramModel: string;
   deepgramLanguage: string;
+  factCheckEnabled: boolean;
+  factCheckProvider: 'google-fact-check';
+  googleFactCheckApiKey?: string;
+  googleFactCheckLanguageCode: string;
+  googleFactCheckPageSize: number;
+  factCheckMaxClaimsPerSession: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -19,6 +25,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     deepgramModel: env.DEEPGRAM_MODEL ?? 'nova-3',
     deepgramLanguage: env.DEEPGRAM_LANGUAGE ?? 'en-US',
+    factCheckEnabled: readBoolean(
+      env.FACT_CHECK_ENABLED,
+      Boolean(env.GOOGLE_FACT_CHECK_API_KEY),
+    ),
+    factCheckProvider: 'google-fact-check',
+    googleFactCheckApiKey: env.GOOGLE_FACT_CHECK_API_KEY,
+    googleFactCheckLanguageCode: env.GOOGLE_FACT_CHECK_LANGUAGE_CODE ?? 'en-US',
+    googleFactCheckPageSize: readNumber(env.GOOGLE_FACT_CHECK_PAGE_SIZE, 3),
+    factCheckMaxClaimsPerSession: readNumber(
+      env.FACT_CHECK_MAX_CLAIMS_PER_SESSION,
+      5,
+    ),
   };
 }
 
@@ -29,4 +47,12 @@ function readNumber(value: string | undefined, fallback: number): number {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }

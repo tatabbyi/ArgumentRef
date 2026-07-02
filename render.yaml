@@ -20,3 +20,11 @@ services:
         value: nova-3
       - key: DEEPGRAM_LANGUAGE
         value: en-US
+      - key: FACT_CHECK_ENABLED
+        value: true
+      - key: GOOGLE_FACT_CHECK_LANGUAGE_CODE
+        value: en-US
+      - key: GOOGLE_FACT_CHECK_PAGE_SIZE
+        value: 3
+      - key: FACT_CHECK_MAX_CLAIMS_PER_SESSION
+        value: 5

@@ -74,11 +74,11 @@ Example event:
 
 ## Phase 4: Fact Checking
 
-Future implementation. The backend sends claims to a fact-checking provider such as Perplexity.
+Current implementation when `GOOGLE_FACT_CHECK_API_KEY` is configured. The backend searches published fact checks through Google Fact Check Tools.
 
 ```text
 claim.detected
-  -> Perplexity/search-backed checker
+  -> Google Fact Check Tools API
   -> fact_check.completed event
 ```
 
@@ -88,11 +88,20 @@ Example event:
 {
   "type": "fact_check.completed",
   "claimId": "claim-123",
-  "verdict": "supported",
-  "summary": "The claim matches the cited budget report.",
-  "sources": ["https://example.com/report"]
+  "status": "matched_fact_check",
+  "summary": "Found 1 published fact check result from Example Publisher. Rating: False.",
+  "sources": [
+    {
+      "title": "Example fact check title",
+      "publisher": "Example Publisher",
+      "rating": "False",
+      "url": "https://example.com/fact-check"
+    }
+  ]
 }
 ```
+
+This is a free published-fact-check lookup, not an unrestricted truth engine. `no_match` means no matching published fact check was found.
 
 ## Phase 5: Session Storage
 

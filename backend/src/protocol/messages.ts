@@ -99,6 +99,62 @@ export interface SpeakerMappedEvent {
   source: 'query_calibration';
 }
 
+export type FactCheckStatus = 'matched_fact_check' | 'no_match';
+
+export interface FactCheckSource {
+  title: string;
+  url: string;
+  publisher?: string;
+  rating?: string;
+  reviewedClaim?: string;
+}
+
+export interface FactCheckStartedEvent {
+  type: 'fact_check.started';
+  provider: 'google-fact-check';
+  claimId: string;
+  sessionId: string;
+  streamId: string;
+  speaker: string;
+  speakerLabel?: string;
+  claim: string;
+}
+
+export interface FactCheckCompletedEvent {
+  type: 'fact_check.completed';
+  provider: 'google-fact-check';
+  claimId: string;
+  sessionId: string;
+  streamId: string;
+  speaker: string;
+  speakerLabel?: string;
+  claim: string;
+  status: FactCheckStatus;
+  summary: string;
+  sources: FactCheckSource[];
+}
+
+export interface FactCheckSkippedEvent {
+  type: 'fact_check.skipped';
+  claimId: string;
+  sessionId: string;
+  streamId: string;
+  reason:
+    | 'disabled'
+    | 'missing_api_key'
+    | 'session_limit_reached'
+    | 'provider_unavailable';
+}
+
+export interface FactCheckFailedEvent {
+  type: 'fact_check.failed';
+  provider: 'google-fact-check';
+  claimId: string;
+  sessionId: string;
+  streamId: string;
+  message: string;
+}
+
 export type ServerEvent =
   | {
       type: 'session.started';
@@ -157,6 +213,10 @@ export type ServerEvent =
   | ClaimDetectedEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
+  | FactCheckStartedEvent
+  | FactCheckCompletedEvent
+  | FactCheckSkippedEvent
+  | FactCheckFailedEvent
   | {
       type: 'error';
       code: string;

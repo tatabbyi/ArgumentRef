@@ -95,6 +95,10 @@ function printEvent(event: ServerEvent): void {
     case 'transcription.error':
     case 'speaker.diarization_status':
     case 'speaker.mapped':
+    case 'fact_check.started':
+    case 'fact_check.completed':
+    case 'fact_check.skipped':
+    case 'fact_check.failed':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;

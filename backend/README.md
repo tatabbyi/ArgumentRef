@@ -117,6 +117,11 @@ MAX_AUDIO_CHUNK_BYTES=1048576
 DEEPGRAM_API_KEY=
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
+FACT_CHECK_ENABLED=true
+GOOGLE_FACT_CHECK_API_KEY=
+GOOGLE_FACT_CHECK_LANGUAGE_CODE=en-US
+GOOGLE_FACT_CHECK_PAGE_SIZE=3
+FACT_CHECK_MAX_CLAIMS_PER_SESSION=5
 ```
 
 ## Deploy to Render
@@ -170,10 +175,12 @@ Future environment variables:
 ```sh
 DEEPGRAM_API_KEY=...
 DATABASE_URL=...
-PERPLEXITY_API_KEY=...
+GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
 Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
+
+Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
 
 For the first mobile-to-Deepgram test, send raw PCM 16-bit mono audio:
 
@@ -230,6 +237,8 @@ Expected output:
 {"type":"transcript.partial", "speaker":"speaker_0", "text":"..."}
 {"type":"transcript.final", "speaker":"speaker_0", "text":"..."}
 {"type":"claim.detected", "speaker":"speaker_0", "text":"...", "reason":"contains_number"}
+{"type":"fact_check.started", "claimId":"...", "provider":"google-fact-check"}
+{"type":"fact_check.completed", "claimId":"...", "status":"matched_fact_check", "sources":[...]}
 ```
 
 For speaker diarization, use audio with two clearly different speakers who take turns speaking. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
@@ -249,6 +258,51 @@ The backend maps the first Deepgram speaker ID it sees to `PersonA`, the second 
 
 This is a controlled test mapping, not voiceprint recognition. The final app can use the same idea by asking each participant to speak a short calibration sentence before the argument starts. If the test only shows `single_speaker`, Deepgram is not hearing enough difference/turn-taking in the audio yet.
 
+## Test Google Fact Check Events
+
+After the Render service has `GOOGLE_FACT_CHECK_API_KEY` configured and redeployed, any `claim.detected` event can trigger a fact-check lookup.
+
+The backend emits:
+
+```json
+{"type":"fact_check.started", "provider":"google-fact-check", "claimId":"..."}
+```
+
+Then either:
+
+```json
+{
+  "type": "fact_check.completed",
+  "provider": "google-fact-check",
+  "claimId": "...",
+  "status": "matched_fact_check",
+  "summary": "Found 1 published fact check result from Example Publisher. Rating: False.",
+  "sources": [
+    {
+      "title": "Example fact check title",
+      "publisher": "Example Publisher",
+      "rating": "False",
+      "url": "https://example.com/fact-check"
+    }
+  ]
+}
+```
+
+Or:
+
+```json
+{
+  "type": "fact_check.completed",
+  "provider": "google-fact-check",
+  "claimId": "...",
+  "status": "no_match",
+  "summary": "No matching published fact check was found.",
+  "sources": []
+}
+```
+
+This free integration searches existing published fact checks. It should not claim that an unmatched statement is true or false.
+
 ## Next Step
 
-The backend now detects checkable claims from `transcript.final` events and emits `claim.detected`. The next module should send those queued claims to a fact-checking provider. The frontend should consume normalized transcript and claim events from the backend, not talk to Deepgram directly.
+The backend now detects checkable claims from `transcript.final` events and sends them to Google Fact Check Tools when configured. The frontend should consume normalized transcript, claim, and fact-check events from the backend, not talk to Deepgram or Google directly.
