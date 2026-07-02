@@ -27,6 +27,48 @@ export const clientControlMessageSchema = z.discriminatedUnion('type', [
 
 export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
 
+export interface TranscriptWord {
+  word: string;
+  speaker: string;
+  startMs?: number;
+  endMs?: number;
+  confidence?: number;
+}
+
+interface BaseTranscriptEvent {
+  provider: 'deepgram';
+  sessionId: string;
+  streamId: string;
+  speaker: string;
+  text: string;
+  startMs?: number;
+  endMs?: number;
+  confidence?: number;
+  words: TranscriptWord[];
+}
+
+export type TranscriptPartialEvent = BaseTranscriptEvent & {
+  type: 'transcript.partial';
+};
+
+export type TranscriptFinalEvent = BaseTranscriptEvent & {
+  type: 'transcript.final';
+};
+
+export interface ClaimDetectedEvent {
+  type: 'claim.detected';
+  claimId: string;
+  sessionId: string;
+  streamId: string;
+  speaker: string;
+  text: string;
+  reason: string;
+  status: 'queued';
+  sourceEvent: 'transcript.final';
+  startMs?: number;
+  endMs?: number;
+}
+
 export type ServerEvent =
   | {
       type: 'session.started';
@@ -76,31 +118,14 @@ export type ServerEvent =
       provider: 'deepgram';
       message: string;
     }
-  | {
-      type: 'transcript.partial' | 'transcript.final';
-      provider: 'deepgram';
-      sessionId: string;
-      streamId: string;
-      speaker: string;
-      text: string;
-      startMs?: number;
-      endMs?: number;
-      confidence?: number;
-      words: TranscriptWord[];
-    }
+  | TranscriptPartialEvent
+  | TranscriptFinalEvent
+  | ClaimDetectedEvent
   | {
       type: 'error';
       code: string;
       message: string;
     };
-
-export interface TranscriptWord {
-  word: string;
-  speaker: string;
-  startMs?: number;
-  endMs?: number;
-  confidence?: number;
-}
 
 export function parseClientControlMessage(data: string): ClientControlMessage {
   return clientControlMessageSchema.parse(JSON.parse(data));

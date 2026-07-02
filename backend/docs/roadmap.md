@@ -48,7 +48,7 @@ Example event:
 
 ## Phase 3: Claim Queue
 
-The backend watches final transcript text for checkable claims.
+Current implementation. The backend watches final transcript text for checkable claims.
 
 ```text
 transcript.final
@@ -70,7 +70,7 @@ Example event:
 
 ## Phase 4: Fact Checking
 
-The backend sends claims to a fact-checking provider such as Perplexity.
+Future implementation. The backend sends claims to a fact-checking provider such as Perplexity.
 
 ```text
 claim.detected
