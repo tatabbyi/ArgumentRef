@@ -37,6 +37,11 @@ dependencies:
   google_fonts: ^6.3.2
   shared_preferences: ^2.5.3
 
+  # Live referee audio pipeline: capture raw PCM16 mic audio and stream it as
+  # binary frames to the backend /v1/audio WebSocket for Deepgram transcription.
+  record: ^6.1.2
+  web_socket_channel: ^3.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

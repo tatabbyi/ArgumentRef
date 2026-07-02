@@ -12,6 +12,8 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Argument Referee listens to your conversation so the ref can follow who's talking and referee live.</string>
 	<key>CFBundleName</key>
 	<string>argumentref</string>
 	<key>CFBundlePackageType</key>

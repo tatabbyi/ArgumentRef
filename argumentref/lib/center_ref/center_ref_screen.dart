@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../audio/live_ref_controller.dart';
 import '../ui/ref_theme.dart';
 import 'beats.dart';
 import 'referee.dart';
@@ -12,15 +13,23 @@ import 'volume_wave.dart';
 /// room but never speaks. His eyes track whoever's talking while the brows,
 /// mouth and whistle respond live; everything else orbits him.
 ///
-/// The scene is driven by [kBeats], a scripted loop that advances every
-/// [beatDuration], layered over continuous breathing/sway/blink/saccade signals
-/// — a faithful rebuild of the design prototype's embedded controller.
+/// In **demo mode** (default) the scene is driven by [kBeats], a scripted loop
+/// that advances every [beatDuration] — a faithful rebuild of the design
+/// prototype's embedded controller.
+///
+/// In **live mode** ([live] = true) the same face is driven by a
+/// [LiveRefController]: real microphone audio is streamed to the backend and the
+/// referee reacts to the transcripts that come back — who holds the floor, the
+/// flow balance, interruptions — with the live transcript shown beneath him.
+/// Either way the continuous breathing/sway/blink/saccade signals keep him
+/// alive.
 class CenterRefScreen extends StatefulWidget {
   const CenterRefScreen({
     super.key,
     this.leftName = 'Maya',
     this.rightName = 'Devin',
     this.onEnd,
+    this.live = false,
   });
 
   /// The speaker on the left (green). Defaults to the prototype's "Maya".
@@ -29,9 +38,13 @@ class CenterRefScreen extends StatefulWidget {
   /// The speaker on the right (orange). Defaults to the prototype's "Devin".
   final String rightName;
 
-  /// Called when the user ends the session. Defaults to popping this route
-  /// (back to the welcome screen) when null.
+  /// Called when the user ends the session. Defaults to stopping any live
+  /// session and popping this route (back to the welcome screen) when null.
   final VoidCallback? onEnd;
+
+  /// When true, capture the microphone and drive the ref from real transcripts
+  /// instead of the scripted [kBeats] demo loop.
+  final bool live;
 
   @override
   State<CenterRefScreen> createState() => _CenterRefScreenState();
@@ -55,11 +68,19 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   bool _blinking = false;
   double _saccadeJitter = 0;
 
-  // Read-outs persist between beats until a beat overwrites them.
-  late int _flow = kBeats.first.flow!;
-  late int _cut = kBeats.first.cut!;
+  /// The live pipeline, created only in live mode. Null → scripted demo.
+  LiveRefController? _live;
 
-  Beat get _beat => kBeats[_beatIndex];
+  // Demo read-outs persist between beats until a beat overwrites them.
+  late int _demoFlow = kBeats.first.flow!;
+  late int _demoCut = kBeats.first.cut!;
+
+  /// The current beat — from the live controller when streaming, else the
+  /// scripted demo loop.
+  Beat get _beat => _live?.beat ?? kBeats[_beatIndex];
+
+  int get _flow => _live?.flow ?? _demoFlow;
+  int get _cut => _live?.cutIns ?? _demoCut;
 
   /// First letter of a name, upper-cased, for the avatar chip.
   String _initial(String name) {
@@ -82,9 +103,24 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     _liveDot = _repeat(const Duration(milliseconds: 800), reverse: true);
     _ping = _repeat(const Duration(milliseconds: 1500));
 
-    _beatTimer = Timer.periodic(beatDuration, (_) => _advanceBeat());
+    if (widget.live) {
+      final controller = LiveRefController(
+        leftName: widget.leftName,
+        rightName: widget.rightName,
+      );
+      _live = controller;
+      controller.addListener(_onLive);
+      // Fire-and-forget: status/errors surface through the controller's state.
+      unawaited(controller.start());
+    } else {
+      _beatTimer = Timer.periodic(beatDuration, (_) => _advanceBeat());
+    }
     _blinkTimer = Timer.periodic(blinkInterval, (_) => _blink());
     _saccadeTimer = Timer.periodic(saccadeInterval, (_) => _saccade());
+  }
+
+  void _onLive() {
+    if (mounted) setState(() {});
   }
 
   AnimationController _repeat(Duration period, {bool reverse = false}) {
@@ -97,8 +133,8 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     setState(() {
       _beatIndex = (_beatIndex + 1) % kBeats.length;
       final b = _beat;
-      if (b.flow != null) _flow = b.flow!;
-      if (b.cut != null) _cut = b.cut!;
+      if (b.flow != null) _demoFlow = b.flow!;
+      if (b.cut != null) _demoCut = b.cut!;
     });
   }
 
@@ -122,11 +158,20 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     _beatTimer?.cancel();
     _blinkTimer?.cancel();
     _saccadeTimer?.cancel();
+    _live?.removeListener(_onLive);
+    _live?.dispose();
     _breathe.dispose();
     _sway.dispose();
     _liveDot.dispose();
     _ping.dispose();
     super.dispose();
+  }
+
+  /// Ends a live session promptly (the controller also stops on dispose) and
+  /// returns to the welcome screen.
+  void _handleEnd() {
+    unawaited(_live?.stop());
+    Navigator.of(context).maybePop();
   }
 
   @override
@@ -138,8 +183,10 @@ class _CenterRefScreenState extends State<CenterRefScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _title(),
+            if (_live != null) _statusBar(_live!),
             _guidance(),
             Expanded(child: _stage()),
+            if (_live != null) _transcriptPanel(_live!),
             _stats(),
             _endButton(),
             const SizedBox(height: 8),
@@ -158,7 +205,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
       child: RefPrimaryButton(
         label: 'End session',
         color: RefPalette.red,
-        onPressed: widget.onEnd ?? () => Navigator.of(context).maybePop(),
+        onPressed: widget.onEnd ?? _handleEnd,
       ),
     );
   }
@@ -201,6 +248,114 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             },
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Live status ─────────────────────────────────────────────────────────
+  /// A one-line banner under the title describing the audio/transcription
+  /// pipeline state (connecting / listening / live / mic denied / error).
+  Widget _statusBar(LiveRefController live) {
+    final problem = live.isProblem;
+    final color = problem ? RefPalette.red : RefPalette.olive;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 0, 22, 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 7),
+          Flexible(
+            child: Text(
+              live.statusLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: mulish(
+                size: 11.5,
+                weight: FontWeight.w700,
+                letterSpacing: 0.2,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Live transcript ─────────────────────────────────────────────────────
+  /// The rolling transcript beneath the ref: finalised lines plus the in-flight
+  /// (interim) line, newest at the bottom.
+  Widget _transcriptPanel(LiveRefController live) {
+    final lines = live.transcript;
+    final rows = <Widget>[
+      if (live.hasPartial)
+        _transcriptRow(live.partialSpeaker, live.partialText, faded: true),
+      for (final line in lines.reversed)
+        _transcriptRow(line.speaker, line.text, faded: false),
+    ];
+
+    return Container(
+      height: 92,
+      margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: RefPalette.ink.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: rows.isEmpty
+          ? Center(
+              child: Text(
+                'What everyone says will show up here.',
+                style: mulish(
+                  size: 12.5,
+                  color: RefPalette.ink.withValues(alpha: 0.4),
+                ),
+              ),
+            )
+          : ListView(
+              reverse: true,
+              padding: EdgeInsets.zero,
+              children: rows,
+            ),
+    );
+  }
+
+  Widget _transcriptRow(Speaker speaker, String text, {required bool faded}) {
+    final color = switch (speaker) {
+      Speaker.left => RefPalette.green,
+      Speaker.right => RefPalette.orange,
+      Speaker.none => RefPalette.olive,
+    };
+    final name = switch (speaker) {
+      Speaker.left => widget.leftName,
+      Speaker.right => widget.rightName,
+      Speaker.none => 'Someone',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$name  ',
+              style: mulish(size: 12.5, weight: FontWeight.w800, color: color),
+            ),
+            TextSpan(
+              text: text,
+              style: mulish(
+                size: 12.5,
+                weight: FontWeight.w500,
+                color: RefPalette.ink.withValues(alpha: faded ? 0.45 : 0.82),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
