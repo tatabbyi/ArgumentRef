@@ -56,3 +56,13 @@ services:
         value: true
       - key: REFEREE_INTERVENTION_COOLDOWN_MS
         value: 10000
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        value: JBFqnCBsd6RMkjVDRZzb
+      - key: ELEVENLABS_MODEL_ID
+        value: eleven_multilingual_v2
+      - key: ELEVENLABS_OUTPUT_FORMAT
+        value: mp3_44100_128
+      - key: ELEVENLABS_MAX_TEXT_CHARS
+        value: 600

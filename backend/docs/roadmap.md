@@ -194,7 +194,23 @@ The intervention event includes a category, priority, user-facing message,
 reason, and source event. This is intentionally rule-based so it adds no new API
 cost and stays fast enough for live use.
 
-## Phase 10: Session Storage
+## Phase 10: AI Referee Voice
+
+Current implementation when `ELEVENLABS_API_KEY` is configured. The mobile app
+can call the backend speech endpoint with text from an intervention message and
+receive audio bytes to play.
+
+```text
+referee.intervention.suggested
+  -> mobile app POST /v1/speech
+  -> backend ElevenLabs Text to Speech
+  -> MP3 audio response
+```
+
+The ElevenLabs key stays on the backend. The app should not call ElevenLabs
+directly.
+
+## Phase 11: Session Storage
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on

@@ -29,6 +29,11 @@ export interface AppConfig {
   argumentRatingMinTranscriptLines: number;
   refereeInterventionsEnabled: boolean;
   refereeInterventionCooldownMs: number;
+  elevenLabsApiKey?: string;
+  elevenLabsVoiceId: string;
+  elevenLabsModelId: string;
+  elevenLabsOutputFormat: string;
+  elevenLabsMaxTextChars: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -80,6 +85,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     refereeInterventionCooldownMs: readNonNegativeNumber(
       env.REFEREE_INTERVENTION_COOLDOWN_MS,
       10_000,
+    ),
+    elevenLabsApiKey: env.ELEVENLABS_API_KEY,
+    elevenLabsVoiceId: env.ELEVENLABS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb',
+    elevenLabsModelId: env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2',
+    elevenLabsOutputFormat:
+      env.ELEVENLABS_OUTPUT_FORMAT ?? 'mp3_44100_128',
+    elevenLabsMaxTextChars: readNumber(
+      env.ELEVENLABS_MAX_TEXT_CHARS,
+      600,
     ),
   };
 }

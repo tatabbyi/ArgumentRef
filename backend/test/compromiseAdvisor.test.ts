@@ -168,6 +168,10 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     argumentRatingMinTranscriptLines: 4,
     refereeInterventionsEnabled: false,
     refereeInterventionCooldownMs: 10_000,
+    elevenLabsVoiceId: 'test-voice',
+    elevenLabsModelId: 'eleven_multilingual_v2',
+    elevenLabsOutputFormat: 'mp3_44100_128',
+    elevenLabsMaxTextChars: 600,
     ...overrides,
   };
 }

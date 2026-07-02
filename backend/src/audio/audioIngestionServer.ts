@@ -17,6 +17,10 @@ import {
   createDeepgramTranscriber,
   type Transcriber,
 } from '../transcription/deepgramTranscriber.js';
+import {
+  SpeechServiceError,
+  synthesizeSpeech,
+} from '../speech/elevenLabsSpeechService.js';
 import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
@@ -45,7 +49,7 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
   const sessionStore = new SessionStore(config.audioStorageDir);
   const historyStore = createHistoryStore(config);
   const httpServer = createServer((request, response) => {
-    void handleHttpRequest(request, response, historyStore);
+    void handleHttpRequest(request, response, historyStore, config);
   });
   const webSocketServer = new WebSocketServer({
     noServer: true,
@@ -109,6 +113,7 @@ async function handleHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   historyStore: HistoryStore,
+  config: AppConfig,
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
 
@@ -130,11 +135,57 @@ async function handleHttpRequest(
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/v1/speech') {
+    await sendSpeech(response, request, config);
+    return;
+  }
+
   sendJson(response, 404, {
     error: 'not_found',
     message:
-      'Use /health, GET /v1/sessions, GET /v1/sessions/:sessionId, or connect WebSocket clients to /v1/audio.',
+      'Use /health, GET /v1/sessions, GET /v1/sessions/:sessionId, POST /v1/speech, or connect WebSocket clients to /v1/audio.',
   });
+}
+
+async function sendSpeech(
+  response: ServerResponse,
+  request: IncomingMessage,
+  config: AppConfig,
+): Promise<void> {
+  try {
+    const payload = await readJsonBody(request, 32_768);
+    const speech = await synthesizeSpeech(config, payload);
+    response.writeHead(200, {
+      'content-type': speech.contentType,
+      'cache-control': 'no-store',
+      'x-voice-id': speech.voiceId,
+      'x-model-id': speech.modelId,
+      'x-output-format': speech.outputFormat,
+    });
+    response.end(speech.audio);
+  } catch (error) {
+    if (error instanceof SpeechServiceError) {
+      sendJson(response, error.statusCode, {
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof ZodError) {
+      sendJson(response, 400, {
+        error: 'invalid_speech_request',
+        message: error.issues.map((issue) => issue.message).join('; '),
+      });
+      return;
+    }
+
+    sendJson(response, 400, {
+      error: 'invalid_speech_request',
+      message:
+        error instanceof Error ? error.message : 'Failed to read speech request.',
+    });
+  }
 }
 
 async function sendSessionList(
@@ -524,6 +575,51 @@ function sendJson(
     'content-type': 'application/json; charset=utf-8',
   });
   response.end(`${JSON.stringify(payload)}\n`);
+}
+
+function readJsonBody(
+  request: IncomingMessage,
+  maxBytes: number,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      callback();
+    };
+
+    request.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        finish(() => {
+          reject(new Error(`Request body must be ${maxBytes} bytes or fewer.`));
+        });
+        request.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    request.on('end', () => {
+      finish(() => {
+        try {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          resolve(raw ? JSON.parse(raw) : {});
+        } catch {
+          reject(new Error('Request body must be valid JSON.'));
+        }
+      });
+    });
+
+    request.on('error', (error) => {
+      finish(() => reject(error));
+    });
+  });
 }
 
 function rawDataToBuffer(data: WebSocket.RawData): Buffer {

@@ -15,11 +15,13 @@ Default endpoints:
 
 - Health: `http://localhost:8081/health`
 - Audio WebSocket: `ws://localhost:8081/v1/audio`
+- Speech synthesis: `POST http://localhost:8081/v1/speech`
 
 For a deployed backend, use:
 
 - Health: `https://your-backend.example.com/health`
 - Audio WebSocket: `wss://your-backend.example.com/v1/audio`
+- Speech synthesis: `POST https://your-backend.example.com/v1/speech`
 
 ## Audio Stream Protocol
 
@@ -193,6 +195,11 @@ ARGUMENT_RATING_INTERVAL_MS=30000
 ARGUMENT_RATING_MIN_TRANSCRIPT_LINES=4
 REFEREE_INTERVENTIONS_ENABLED=true
 REFEREE_INTERVENTION_COOLDOWN_MS=10000
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
+ELEVENLABS_MAX_TEXT_CHARS=600
 ```
 
 ## Deploy to Render
@@ -268,6 +275,8 @@ Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do
 Add `GEMINI_API_KEY` there too to activate compromise suggestions, conversation debriefs, logical fallacy detection, and argument ratings. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
+
+Add `ELEVENLABS_API_KEY` in Render's Environment tab to activate AI voice. Do not put it in the Flutter app.
 
 Add `DATABASE_URL` in Render's Environment tab to activate Postgres history. Use Render's internal database URL when the database and backend are in the same Render account/region. Keep `DATABASE_SSL=false` for the internal URL unless Render gives you a URL with `sslmode=require`.
 
@@ -544,6 +553,25 @@ The engine currently listens to detected claims, completed fact-checks, fallacy
 detections, compromise suggestions, and low argument ratings. It uses
 `REFEREE_INTERVENTION_COOLDOWN_MS` to avoid repeated prompts in the same category.
 
+## Test AI Voice Events
+
+AI voice uses ElevenLabs through the backend. The mobile app should never receive
+`ELEVENLABS_API_KEY`; it should call the backend speech endpoint with text to
+speak.
+
+Example:
+
+```sh
+curl -X POST https://argumentref-backend.onrender.com/v1/speech \
+  -H "content-type: application/json" \
+  -d '{"text":"Pause for a moment and restate the other person'\''s point."}' \
+  --output referee-voice.mp3
+```
+
+By default the backend returns MP3 audio. The frontend can call this endpoint
+when it receives a `referee.intervention.suggested` event and play the returned
+audio.
+
 ## Next Step
 
-The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, supports private referee settings, and turns those signals into referee intervention suggestions. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, settings, and history data from the backend.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, supports private referee settings, turns those signals into referee intervention suggestions, and can synthesize AI referee voice audio. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, settings, speech, and history data from the backend.
