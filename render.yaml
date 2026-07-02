@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: argumentref-backend
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: AUDIO_STORAGE_DIR
+        value: /tmp/argumentref-sessions
+      - key: MAX_AUDIO_CHUNK_BYTES
+        value: 1048576
