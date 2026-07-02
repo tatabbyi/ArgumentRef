@@ -183,6 +183,8 @@ wss://argumentref-backend.onrender.com/v1/audio?sessionId=demo-session&participa
 
 Deepgram diarization is enabled with `diarize_model=latest`.
 
+Deepgram does not know real names. It returns anonymous speaker IDs such as `speaker_0` and `speaker_1`. If the app needs names like "Alice" or "Ben", the backend needs a calibration/mapping step.
+
 ## Fully On-Device Mode
 
 If the app must work with no internet connection at all, this backend is not part of that path. The phone would need on-device speech recognition. That can produce a transcript, but reliable speaker diarization on one phone is much harder and usually needs a cloud diarization service or a heavy native ML model. For v1, the professional recommendation is:
@@ -223,13 +225,29 @@ Expected output:
 
 ```json
 {"type":"session.started", "...":"..."}
-{"type":"transcription.connected", "provider":"deepgram", "...":"..."}
+{"type":"transcription.connected", "provider":"deepgram", "diarization":{"requested":true,"model":"latest"}, "...":"..."}
+{"type":"speaker.diarization_status", "status":"single_speaker", "speakers":["speaker_0"], "...":"..."}
 {"type":"transcript.partial", "speaker":"speaker_0", "text":"..."}
 {"type":"transcript.final", "speaker":"speaker_0", "text":"..."}
 {"type":"claim.detected", "speaker":"speaker_0", "text":"...", "reason":"contains_number"}
 ```
 
-For speaker diarization, use audio with two clearly different speakers. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
+For speaker diarization, use audio with two clearly different speakers who take turns speaking. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
+
+To test backend speaker calibration without frontend work, pass labels in the known order you expect speakers to appear:
+
+```sh
+npm run test:remote-audio -- --file ./two-speakers.wav --speakerLabels PersonA,PersonB
+```
+
+The backend maps the first Deepgram speaker ID it sees to `PersonA`, the second to `PersonB`, and emits:
+
+```json
+{"type":"speaker.mapped", "speaker":"speaker_0", "speakerLabel":"PersonA"}
+{"type":"transcript.final", "speaker":"speaker_0", "speakerLabel":"PersonA", "text":"..."}
+```
+
+This is a controlled test mapping, not voiceprint recognition. The final app can use the same idea by asking each participant to speak a short calibration sentence before the argument starts. If the test only shows `single_speaker`, Deepgram is not hearing enough difference/turn-taking in the audio yet.
 
 ## Next Step
 

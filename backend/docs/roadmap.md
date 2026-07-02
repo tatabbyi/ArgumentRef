@@ -30,6 +30,7 @@ Mobile app
   -> backend /v1/audio
   -> Deepgram streaming API
   -> transcript + speaker labels
+  -> optional backend calibration labels
   -> backend emits transcript events to mobile app
 ```
 
@@ -40,11 +41,14 @@ Example event:
   "type": "transcript.final",
   "sessionId": "demo-session",
   "speaker": "speaker_0",
+  "speakerLabel": "PersonA",
   "text": "The budget increased by 20 percent.",
   "startMs": 12400,
   "endMs": 15900
 }
 ```
+
+Deepgram returns anonymous IDs like `speaker_0`; the backend can map those IDs to calibration labels supplied by the app or test script.
 
 ## Phase 3: Claim Queue
 

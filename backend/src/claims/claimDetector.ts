@@ -26,6 +26,7 @@ export class ClaimDetector {
       sessionId: event.sessionId,
       streamId: event.streamId,
       speaker: event.speaker,
+      speakerLabel: event.speakerLabel,
       text: event.text,
       reason: result.reason,
       status: 'queued',

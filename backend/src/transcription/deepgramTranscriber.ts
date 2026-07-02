@@ -3,8 +3,11 @@ import type { AppConfig } from '../config.js';
 import type {
   AudioFormat,
   ServerEvent,
+  SpeakerDiarizationStatus,
   TranscriptWord,
 } from '../protocol/messages.js';
+
+const DEEPGRAM_DIARIZE_MODEL = 'latest';
 
 export interface TranscriptionContext {
   sessionId: string;
@@ -51,6 +54,7 @@ class DeepgramTranscriber implements Transcriber {
   private readonly keepAlive: NodeJS.Timeout;
   private isOpen = false;
   private isClosed = false;
+  private lastDiarizationStatusKey?: string;
 
   constructor(
     private readonly config: AppConfig,
@@ -72,6 +76,10 @@ class DeepgramTranscriber implements Transcriber {
         streamId: this.context.streamId,
         model: this.config.deepgramModel,
         language: this.config.deepgramLanguage,
+        diarization: {
+          requested: true,
+          model: DEEPGRAM_DIARIZE_MODEL,
+        },
       });
       this.flushPendingAudio();
     });
@@ -149,8 +157,14 @@ class DeepgramTranscriber implements Transcriber {
     }
 
     const alternative = message.channel?.alternatives?.[0];
-    const transcript = alternative?.transcript?.trim();
-    if (!alternative || !transcript) {
+    if (!alternative) {
+      return;
+    }
+
+    this.emitDiarizationStatus(alternative.words ?? []);
+
+    const transcript = alternative.transcript?.trim();
+    if (!transcript) {
       return;
     }
 
@@ -173,6 +187,25 @@ class DeepgramTranscriber implements Transcriber {
       });
     }
   }
+
+  private emitDiarizationStatus(words: DeepgramWord[]): void {
+    const summary = summarizeDeepgramDiarization(words);
+    const statusKey = `${summary.status}:${summary.speakers.join(',')}`;
+
+    if (statusKey === this.lastDiarizationStatusKey) {
+      return;
+    }
+
+    this.lastDiarizationStatusKey = statusKey;
+
+    this.emit({
+      type: 'speaker.diarization_status',
+      provider: 'deepgram',
+      sessionId: this.context.sessionId,
+      streamId: this.context.streamId,
+      ...summary,
+    });
+  }
 }
 
 function buildDeepgramUrl(config: AppConfig, audio: AudioFormat): string {
@@ -182,7 +215,7 @@ function buildDeepgramUrl(config: AppConfig, audio: AudioFormat): string {
   url.searchParams.set('interim_results', 'true');
   url.searchParams.set('punctuate', 'true');
   url.searchParams.set('smart_format', 'true');
-  url.searchParams.set('diarize_model', 'latest');
+  url.searchParams.set('diarize_model', DEEPGRAM_DIARIZE_MODEL);
   url.searchParams.set('endpointing', '300');
 
   if (audio.channels) {
@@ -221,12 +254,21 @@ interface DeepgramResultsMessage {
   };
 }
 
-interface DeepgramWord {
+export interface DeepgramWord {
   word?: string;
+  punctuated_word?: string;
   start?: number;
   end?: number;
   confidence?: number;
   speaker?: number;
+}
+
+export interface DeepgramDiarizationSummary {
+  status: SpeakerDiarizationStatus;
+  speakers: string[];
+  totalWords: number;
+  wordsWithSpeaker: number;
+  message: string;
 }
 
 interface TranscriptSegment {
@@ -247,7 +289,7 @@ function parseDeepgramMessage(payload: string): DeepgramResultsMessage | null {
 
 function toTranscriptWord(word: DeepgramWord): TranscriptWord {
   return {
-    word: word.word ?? '',
+    word: word.punctuated_word ?? word.word ?? '',
     speaker:
       typeof word.speaker === 'number'
         ? `speaker_${word.speaker}`
@@ -255,6 +297,64 @@ function toTranscriptWord(word: DeepgramWord): TranscriptWord {
     startMs: secondsToMs(word.start),
     endMs: secondsToMs(word.end),
     confidence: word.confidence,
+  };
+}
+
+export function summarizeDeepgramDiarization(
+  words: DeepgramWord[],
+): DeepgramDiarizationSummary {
+  const populatedWords = words.filter((word) =>
+    Boolean((word.word ?? word.punctuated_word)?.trim()),
+  );
+  const speakers = [
+    ...new Set(
+      populatedWords
+        .filter((word) => typeof word.speaker === 'number')
+        .map((word) => `speaker_${word.speaker}`),
+    ),
+  ].sort();
+  const wordsWithSpeaker = populatedWords.filter(
+    (word) => typeof word.speaker === 'number',
+  ).length;
+
+  if (populatedWords.length === 0) {
+    return {
+      status: 'no_words',
+      speakers,
+      totalWords: 0,
+      wordsWithSpeaker,
+      message: 'Deepgram has not returned word-level transcript data yet.',
+    };
+  }
+
+  if (wordsWithSpeaker === 0) {
+    return {
+      status: 'missing_speaker_labels',
+      speakers,
+      totalWords: populatedWords.length,
+      wordsWithSpeaker,
+      message:
+        'Deepgram returned words without speaker labels. Check the audio format and diarization request.',
+    };
+  }
+
+  if (speakers.length < 2) {
+    return {
+      status: 'single_speaker',
+      speakers,
+      totalWords: populatedWords.length,
+      wordsWithSpeaker,
+      message:
+        'Deepgram currently sees one speaker. Use longer, clean two-person audio to test diarization.',
+    };
+  }
+
+  return {
+    status: 'multiple_speakers',
+    speakers,
+    totalWords: populatedWords.length,
+    wordsWithSpeaker,
+    message: 'Deepgram is returning multiple speaker labels.',
   };
 }
 

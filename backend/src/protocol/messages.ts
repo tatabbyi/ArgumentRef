@@ -30,6 +30,7 @@ export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
 export interface TranscriptWord {
   word: string;
   speaker: string;
+  speakerLabel?: string;
   startMs?: number;
   endMs?: number;
   confidence?: number;
@@ -40,6 +41,7 @@ interface BaseTranscriptEvent {
   sessionId: string;
   streamId: string;
   speaker: string;
+  speakerLabel?: string;
   text: string;
   startMs?: number;
   endMs?: number;
@@ -61,12 +63,40 @@ export interface ClaimDetectedEvent {
   sessionId: string;
   streamId: string;
   speaker: string;
+  speakerLabel?: string;
   text: string;
   reason: string;
   status: 'queued';
   sourceEvent: 'transcript.final';
   startMs?: number;
   endMs?: number;
+}
+
+export type SpeakerDiarizationStatus =
+  | 'no_words'
+  | 'missing_speaker_labels'
+  | 'single_speaker'
+  | 'multiple_speakers';
+
+export interface SpeakerDiarizationStatusEvent {
+  type: 'speaker.diarization_status';
+  provider: 'deepgram';
+  sessionId: string;
+  streamId: string;
+  status: SpeakerDiarizationStatus;
+  speakers: string[];
+  totalWords: number;
+  wordsWithSpeaker: number;
+  message: string;
+}
+
+export interface SpeakerMappedEvent {
+  type: 'speaker.mapped';
+  sessionId: string;
+  streamId: string;
+  speaker: string;
+  speakerLabel: string;
+  source: 'query_calibration';
 }
 
 export type ServerEvent =
@@ -108,6 +138,10 @@ export type ServerEvent =
       streamId: string;
       model: string;
       language: string;
+      diarization: {
+        requested: true;
+        model: 'latest';
+      };
     }
   | {
       type: 'transcription.disabled';
@@ -121,6 +155,8 @@ export type ServerEvent =
   | TranscriptPartialEvent
   | TranscriptFinalEvent
   | ClaimDetectedEvent
+  | SpeakerDiarizationStatusEvent
+  | SpeakerMappedEvent
   | {
       type: 'error';
       code: string;

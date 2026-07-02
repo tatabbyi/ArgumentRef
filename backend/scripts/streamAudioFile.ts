@@ -9,6 +9,7 @@ interface CliOptions {
   sessionId: string;
   participantId: string;
   encoding: string;
+  speakerLabels: string[];
   sampleRateHz?: number;
   channels?: number;
   chunkBytes: number;
@@ -25,6 +26,7 @@ console.log(`Streaming ${audio.length} bytes from ${options.filePath}`);
 
 const socket = new WebSocket(websocketUrl);
 let sawTranscript = false;
+const observedSpeakers = new Map<string, string | undefined>();
 
 socket.on('open', () => {
   void streamAudio(socket, audio, options);
@@ -36,6 +38,7 @@ socket.on('message', (data) => {
 
   if (event.type === 'transcript.partial' || event.type === 'transcript.final') {
     sawTranscript = true;
+    observedSpeakers.set(event.speaker, event.speakerLabel);
   }
 
   if (event.type === 'session.ended') {
@@ -52,6 +55,19 @@ socket.on('close', () => {
   if (!sawTranscript) {
     console.warn(
       'No transcript events were received. Check that the file contains clear speech and matches the encoding query parameters.',
+    );
+    return;
+  }
+
+  const speakerSummary = [...observedSpeakers.entries()]
+    .map(([speaker, label]) => (label ? `${speaker}=${label}` : speaker))
+    .join(', ');
+
+  console.log(`Observed speakers: ${speakerSummary || 'none'}`);
+
+  if (observedSpeakers.size < 2) {
+    console.warn(
+      'Only one Deepgram speaker was observed. Test with longer audio where two people take clear turns speaking.',
     );
   }
 });
@@ -77,6 +93,8 @@ function printEvent(event: ServerEvent): void {
     case 'transcription.connected':
     case 'transcription.disabled':
     case 'transcription.error':
+    case 'speaker.diarization_status':
+    case 'speaker.mapped':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;
@@ -92,6 +110,9 @@ function printEvent(event: ServerEvent): void {
         JSON.stringify({
           type: event.type,
           speaker: event.speaker,
+          ...('speakerLabel' in event && event.speakerLabel
+            ? { speakerLabel: event.speakerLabel }
+            : {}),
           text: event.text,
           ...('reason' in event ? { reason: event.reason } : {}),
           ...('startMs' in event ? { startMs: event.startMs } : {}),
@@ -113,6 +134,10 @@ function buildWebSocketUrl(options: CliOptions): string {
   url.searchParams.set('sessionId', options.sessionId);
   url.searchParams.set('participantId', options.participantId);
   url.searchParams.set('encoding', options.encoding);
+
+  if (options.speakerLabels.length > 0) {
+    url.searchParams.set('speakerLabels', options.speakerLabels.join(','));
+  }
 
   if (options.sampleRateHz) {
     url.searchParams.set('sampleRateHz', String(options.sampleRateHz));
@@ -159,12 +184,24 @@ function parseArgs(args: string[]): CliOptions {
     participantId:
       values.get('participantId') ?? basename(filePath).replace(/\W+/g, '-'),
     encoding: values.get('encoding') ?? 'unknown',
+    speakerLabels: readSpeakerLabels(values.get('speakerLabels')),
     sampleRateHz: readOptionalNumber(values.get('sampleRateHz')),
     channels: readOptionalNumber(values.get('channels')),
     chunkBytes: readOptionalNumber(values.get('chunkBytes')) ?? 3200,
     delayMs: readOptionalNumber(values.get('delayMs')) ?? 100,
     finalWaitMs: readOptionalNumber(values.get('finalWaitMs')) ?? 3000,
   };
+}
+
+function readSpeakerLabels(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean);
 }
 
 function readOptionalNumber(value: string | undefined): number | undefined {
@@ -193,6 +230,7 @@ Options:
   --url <wss-url>              Defaults to Render backend
   --file <path>                Required audio file path
   --encoding <encoding>        unknown | pcm16 | webm-opus | aac
+  --speakerLabels <a,b>        Optional calibration labels by first-seen speaker order
   --sampleRateHz <number>      Required for raw pcm16
   --channels <number>          Required for raw pcm16
   --chunkBytes <number>        Defaults to 3200

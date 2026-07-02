@@ -16,6 +16,7 @@ import {
   type Transcriber,
 } from '../transcription/deepgramTranscriber.js';
 import { ClaimDetector } from '../claims/claimDetector.js';
+import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
   encoding: 'unknown',
@@ -117,15 +118,31 @@ async function handleAudioConnection(
     audio,
   });
   const claimDetector = new ClaimDetector();
+  const speakerLabeler = new SpeakerLabeler({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    labels: parseSpeakerLabels(optionalQuery(url, 'speakerLabels')),
+  });
   const emitEvent = (event: ServerEvent) => {
-    sendEvent(webSocket, event);
-
-    if (event.type === 'transcript.final') {
-      const claim = claimDetector.detect(event);
-      if (claim) {
-        sendEvent(webSocket, claim);
+    if (event.type === 'transcript.partial' || event.type === 'transcript.final') {
+      const labelled = speakerLabeler.labelTranscript(event);
+      if (labelled.mapping) {
+        sendEvent(webSocket, labelled.mapping);
       }
+
+      sendEvent(webSocket, labelled.event);
+
+      if (labelled.event.type === 'transcript.final') {
+        const claim = claimDetector.detect(labelled.event);
+        if (claim) {
+          sendEvent(webSocket, claim);
+        }
+      }
+
+      return;
     }
+
+    sendEvent(webSocket, event);
   };
 
   emitEvent({
