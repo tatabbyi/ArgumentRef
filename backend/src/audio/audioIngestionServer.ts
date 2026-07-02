@@ -25,6 +25,7 @@ import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
 import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
+import { RoomToneAnalyzer } from '../roomTone/roomToneAnalyzer.js';
 import { FallacyDetector } from '../fallacies/fallacyDetector.js';
 import {
   createHistoryStore,
@@ -33,6 +34,7 @@ import {
 import { RefereeInterventionEngine } from '../interventions/refereeInterventionEngine.js';
 import { ArgumentRater } from '../ratings/argumentRater.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
+import { InterruptionDetector } from '../interruptions/interruptionDetector.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
   encoding: 'unknown',
@@ -310,6 +312,13 @@ async function handleAudioConnection(
     config,
     emit: emitClientEvent,
   });
+  const roomToneAnalyzer = new RoomToneAnalyzer({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: (event) => sendEvent(webSocket, event),
+  });
+  const interruptionDetector = new InterruptionDetector();
   const debriefer = new ConversationDebriefer({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -333,6 +342,12 @@ async function handleAudioConnection(
       emitClientEvent(labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
+        const interruption = interruptionDetector.recordTranscript(labelled.event);
+        if (interruption) {
+          sendEvent(webSocket, interruption);
+        }
+
+        roomToneAnalyzer.recordTranscript(labelled.event);
         fallacyDetector.recordTranscript(labelled.event);
         argumentRater.recordTranscript(labelled.event);
         compromiseAdvisor.recordTranscript(labelled.event);
@@ -360,6 +375,7 @@ async function handleAudioConnection(
     refereeSettings,
   });
   compromiseAdvisor.start();
+  roomToneAnalyzer.start();
   fallacyDetector.start();
   argumentRater.start();
 
@@ -381,6 +397,7 @@ async function handleAudioConnection(
       fallacyDetector,
       argumentRater,
       compromiseAdvisor,
+      roomToneAnalyzer,
       debriefer,
       historyStore,
       sendEnded,
@@ -485,6 +502,7 @@ async function endSession(options: {
   fallacyDetector: FallacyDetector;
   argumentRater: ArgumentRater;
   compromiseAdvisor: CompromiseAdvisor;
+  roomToneAnalyzer: RoomToneAnalyzer;
   debriefer: ConversationDebriefer;
   historyStore: HistoryStore;
   sendEnded: boolean;
@@ -492,6 +510,7 @@ async function endSession(options: {
   options.fallacyDetector.close();
   options.argumentRater.close();
   options.compromiseAdvisor.close();
+  options.roomToneAnalyzer.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();
   const debrief = await options.debriefer.finish(snapshot);

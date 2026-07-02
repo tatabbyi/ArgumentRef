@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../center_ref/beats.dart';
 import 'audio_session.dart';
+import 'compromise_sound_player.dart';
 import 'ref_events.dart';
 
 /// One finalised line of conversation, tagged with the speaker chair we mapped
@@ -17,9 +18,71 @@ class TranscriptLine {
   final String text;
 }
 
+@immutable
+class RoomToneStatus {
+  const RoomToneStatus({
+    required this.label,
+    required this.detail,
+    required this.score,
+    required this.loudness,
+    required this.isHeated,
+    required this.isRepairing,
+    required this.hasAiSignal,
+  });
+
+  final String label;
+  final String detail;
+  final int score;
+  final double loudness;
+  final bool isHeated;
+  final bool isRepairing;
+  final bool hasAiSignal;
+
+  double get waveLevel {
+    final volumeEnergy = 0.18 + loudness * 0.72;
+    final toneEnergy = (score / 100) * (isHeated ? 0.95 : 0.72);
+    return math.max(volumeEnergy, toneEnergy).clamp(0.16, 1.0).toDouble();
+  }
+}
+
+@immutable
+class InterruptionIncident {
+  const InterruptionIncident({
+    required this.interrupter,
+    required this.interrupted,
+    required this.confidence,
+    required this.overlapMs,
+    required this.gapMs,
+    required this.reason,
+  });
+
+  final Speaker interrupter;
+  final Speaker interrupted;
+  final double confidence;
+  final int overlapMs;
+  final int gapMs;
+  final String reason;
+}
+
+@immutable
+class InterruptionStats {
+  const InterruptionStats({
+    required this.leftCutRight,
+    required this.rightCutLeft,
+    this.latest,
+  });
+
+  final int leftCutRight;
+  final int rightCutLeft;
+  final InterruptionIncident? latest;
+
+  int get total => leftCutRight + rightCutLeft;
+}
+
 /// Turns the raw event stream from an [AudioSession] into everything the live
 /// referee screen shows: which chair holds the floor (→ the ref's eyes/head),
-/// a running flow balance, a rough interruption count, and the live transcript.
+/// a running flow balance, directional interruption counts, and the live
+/// transcript.
 ///
 /// When the backend sends calibration labels, those labels decide which chair a
 /// diarized voice belongs to. Older/no-label streams still fall back to
@@ -31,17 +94,23 @@ class LiveRefController extends ChangeNotifier {
     AudioSession? session,
     String? sessionId,
     String? participantId,
+    CompromiseSoundPlayer? compromiseSoundPlayer,
   }) : session =
            session ??
            AudioSession(
              sessionId: sessionId ?? _generateId('sess'),
              participantId: participantId ?? _generateId('phone'),
              speakerLabels: [leftName, rightName],
-           );
+           ),
+       _compromiseSoundPlayer =
+           compromiseSoundPlayer ?? const SilentCompromiseSoundPlayer() {
+    this.session.loudnessListenable.addListener(_onLoudnessChanged);
+  }
 
   final String leftName;
   final String rightName;
   final AudioSession session;
+  final CompromiseSoundPlayer _compromiseSoundPlayer;
 
   static const int _idleGapMs = 2200; // silence before the floor goes empty
   static const int _cutInWindowMs = 800; // overlap tight enough to be a cut-in
@@ -69,16 +138,23 @@ class LiveRefController extends ChangeNotifier {
   int _leftWeight = 0;
   int _rightWeight = 0;
   int _cutIns = 0;
+  int _leftCutRight = 0;
+  int _rightCutLeft = 0;
 
   bool _transcriptionLive = false;
   bool _transcriptionDisabled = false;
   bool _compromisesDisabled = false;
   String? _compromiseError;
+  bool _roomToneDisabled = false;
+  String? _roomToneError;
 
   final List<TranscriptLine> _lines = [];
   final List<CompromiseSuggestion> _compromises = [];
+  RoomToneAnalyzedEvent? _roomToneAnalysis;
+  InterruptionIncident? _latestInterruption;
   String _partialText = '';
   Speaker _partialSpeaker = Speaker.none;
+  String? _lastWhistledCompromiseId;
 
   String _signature = '';
 
@@ -123,6 +199,12 @@ class LiveRefController extends ChangeNotifier {
 
   int get cutIns => _cutIns;
 
+  InterruptionStats get interruptions => InterruptionStats(
+    leftCutRight: _leftCutRight,
+    rightCutLeft: _rightCutLeft,
+    latest: _latestInterruption,
+  );
+
   /// Finalised transcript, oldest first.
   List<TranscriptLine> get transcript => List.unmodifiable(_lines);
 
@@ -133,6 +215,76 @@ class LiveRefController extends ChangeNotifier {
 
   CompromiseSuggestion? get topCompromise =>
       _compromises.isEmpty ? null : _compromises.first;
+
+  RoomToneStatus get roomTone {
+    final loudness = session.loudnessLevel;
+    final volume = _volumeLabel(loudness);
+    final analysis = _roomToneAnalysis;
+
+    if (analysis == null) {
+      final score = (loudness * 72).round().clamp(0, 100).toInt();
+      final label = switch (score) {
+        >= 62 => 'Loud',
+        >= 30 => 'Steady',
+        _ => 'Quiet',
+      };
+      final detail =
+          _roomToneDisabled
+              ? '$volume volume - Tone AI needs Gemini'
+              : _roomToneError != null
+              ? '$volume volume - Tone AI catching up'
+              : '$volume volume';
+      return RoomToneStatus(
+        label: label,
+        detail: detail,
+        score: score,
+        loudness: loudness,
+        isHeated: loudness >= 0.82,
+        isRepairing: false,
+        hasAiSignal: false,
+      );
+    }
+
+    final heated = _isHeatedTone(analysis);
+    final repairing = _isRepairTone(analysis);
+    final loudBoost = switch (loudness) {
+      >= 0.82 => 16,
+      >= 0.62 => 9,
+      >= 0.42 => 4,
+      _ => 0,
+    };
+    final score =
+        math
+            .max(analysis.intensity + loudBoost, loudness * 100)
+            .round()
+            .clamp(0, 100)
+            .toInt();
+    final label =
+        loudness >= 0.78 &&
+                !repairing &&
+                (analysis.dominantTone == RoomToneSignal.neutral ||
+                    analysis.dominantTone == RoomToneSignal.calm)
+            ? 'Loud'
+            : loudness >= 0.78 && heated
+            ? '${_toneLabel(analysis.dominantTone)} + loud'
+            : _toneLabel(analysis.dominantTone);
+    final summary =
+        analysis.summary.isNotEmpty
+            ? analysis.summary
+            : analysis.phrases.isNotEmpty
+            ? analysis.phrases.first.text
+            : _toneLabel(analysis.dominantTone);
+
+    return RoomToneStatus(
+      label: label,
+      detail: '$volume volume - $summary',
+      score: score,
+      loudness: loudness,
+      isHeated: heated || loudness >= 0.86,
+      isRepairing: repairing,
+      hasAiSignal: true,
+    );
+  }
 
   String? get compromiseStatusLabel {
     if (_compromisesDisabled) return 'Compromise coach needs Gemini';
@@ -207,9 +359,16 @@ class LiveRefController extends ChangeNotifier {
     _leftWeight = 0;
     _rightWeight = 0;
     _cutIns = 0;
+    _leftCutRight = 0;
+    _rightCutLeft = 0;
+    _latestInterruption = null;
     _lines.clear();
     _compromises.clear();
     _compromiseError = null;
+    _lastWhistledCompromiseId = null;
+    _roomToneAnalysis = null;
+    _roomToneDisabled = false;
+    _roomToneError = null;
     _partialText = '';
     _partialSpeaker = Speaker.none;
     _signature = '';
@@ -225,6 +384,8 @@ class LiveRefController extends ChangeNotifier {
     _eventSub = null;
     // Detach before the session disposes its notifier.
     session.statusListenable.removeListener(_onStatusChanged);
+    session.loudnessListenable.removeListener(_onLoudnessChanged);
+    unawaited(_compromiseSoundPlayer.dispose());
     unawaited(session.dispose());
     super.dispose();
   }
@@ -232,6 +393,8 @@ class LiveRefController extends ChangeNotifier {
   // ── event handling ─────────────────────────────────────────────────────
 
   void _onStatusChanged() => _refresh();
+
+  void _onLoudnessChanged() => _refresh();
 
   void _onTick() => _refresh();
 
@@ -250,12 +413,20 @@ class LiveRefController extends ChangeNotifier {
         _handleSpeakerMapped(event);
       case TranscriptEvent(isEmpty: false):
         _handleTranscript(event);
+      case InterruptionDetectedEvent():
+        _handleInterruption(event);
       case CompromiseSuggestedEvent(suggestions: final suggestions):
         _handleCompromises(suggestions);
       case CompromiseDisabledEvent():
         _compromisesDisabled = true;
       case CompromiseErrorEvent(message: final message):
         _compromiseError = message;
+      case RoomToneAnalyzedEvent():
+        _handleRoomTone(event);
+      case RoomToneDisabledEvent():
+        _roomToneDisabled = true;
+      case RoomToneErrorEvent(message: final message):
+        _roomToneError = message;
       case _:
         break;
     }
@@ -270,14 +441,13 @@ class LiveRefController extends ChangeNotifier {
     );
     if (now.isBefore(_ignoreConversationUntil)) return;
 
-    // Cut-in heuristic: the floor changed hands while the previous voice had
-    // only just been active — i.e. they talked over each other.
+    // Keep the ref's face reactive while the backend does the actual timed,
+    // directional interruption detection.
     if (_hasHeardAnything &&
         speaker != Speaker.none &&
         _activeSpeaker != Speaker.none &&
         speaker != _activeSpeaker &&
         now.difference(_lastActivityAt).inMilliseconds < _cutInWindowMs) {
-      _cutIns++;
       _concernUntil = now.add(const Duration(milliseconds: _concernHoldMs));
     }
 
@@ -296,6 +466,45 @@ class LiveRefController extends ChangeNotifier {
     }
   }
 
+  void _handleInterruption(InterruptionDetectedEvent event) {
+    final now = DateTime.now();
+    if (now.isBefore(_ignoreConversationUntil)) return;
+
+    final interrupter = _resolveSpeaker(
+      event.interrupter,
+      speakerLabel: event.interrupterLabel,
+    );
+    final interrupted = _resolveSpeaker(
+      event.interrupted,
+      speakerLabel: event.interruptedLabel,
+    );
+    if (interrupter == Speaker.none ||
+        interrupted == Speaker.none ||
+        interrupter == interrupted) {
+      return;
+    }
+
+    if (interrupter == Speaker.left && interrupted == Speaker.right) {
+      _leftCutRight++;
+    } else if (interrupter == Speaker.right && interrupted == Speaker.left) {
+      _rightCutLeft++;
+    }
+
+    _cutIns = _leftCutRight + _rightCutLeft;
+    _latestInterruption = InterruptionIncident(
+      interrupter: interrupter,
+      interrupted: interrupted,
+      confidence: event.confidence,
+      overlapMs: event.overlapMs,
+      gapMs: event.gapMs,
+      reason: event.reason,
+    );
+    _hasHeardAnything = true;
+    _activeSpeaker = interrupter;
+    _lastActivityAt = now;
+    _concernUntil = now.add(const Duration(milliseconds: _concernHoldMs));
+  }
+
   void _appendLine(Speaker speaker, String text) {
     _lines.add(TranscriptLine(speaker: speaker, text: text));
     if (_lines.length > _maxLines) _lines.removeAt(0);
@@ -306,9 +515,24 @@ class LiveRefController extends ChangeNotifier {
     _compromisesDisabled = false;
     if (suggestions.isEmpty) return;
 
+    final ranked = [...suggestions]..sort((a, b) => a.rank.compareTo(b.rank));
+    final topId = ranked.first.id;
+    final shouldPlayWhistle = topId != _lastWhistledCompromiseId;
+
     _compromises
       ..clear()
-      ..addAll([...suggestions]..sort((a, b) => a.rank.compareTo(b.rank)));
+      ..addAll(ranked);
+
+    if (shouldPlayWhistle) {
+      _lastWhistledCompromiseId = topId;
+      unawaited(_compromiseSoundPlayer.playCompromiseFound());
+    }
+  }
+
+  void _handleRoomTone(RoomToneAnalyzedEvent event) {
+    _roomToneAnalysis = event;
+    _roomToneDisabled = false;
+    _roomToneError = null;
   }
 
   void _addWeight(Speaker speaker, String text) {
@@ -360,6 +584,13 @@ class LiveRefController extends ChangeNotifier {
   String _caption() {
     if (micDenied) return 'Enable mic access to referee live';
     if (_transcriptionDisabled) return 'Transcription is off on the server';
+    if (_concerned && _latestInterruption != null) {
+      return switch (_latestInterruption!.interrupted) {
+        Speaker.left => 'Let {L} finish',
+        Speaker.right => 'Let {R} finish',
+        Speaker.none => 'One at a time',
+      };
+    }
     if (_concerned) return 'One at a time';
     if (!_hasHeardAnything) {
       return status == AudioSessionStatus.streaming
@@ -386,11 +617,19 @@ class LiveRefController extends ChangeNotifier {
     final active = _idle ? Speaker.none : _activeSpeaker;
     final mappedLabels = _mappedLabels.toList()..sort();
     final top = topCompromise;
+    final tone = _roomToneAnalysis;
+    final interruption = _latestInterruption;
+    final loudnessBucket = (session.loudnessLevel * 20).round();
     final sig =
-        '$active|$_concerned|$flow|$_cutIns|$statusLabel|'
+        '$active|$_concerned|$flow|$_cutIns:$_leftCutRight:$_rightCutLeft|'
+        '${interruption?.interrupter}>${interruption?.interrupted}:'
+        '${interruption?.confidence}|$statusLabel|'
         '${mappedLabels.join(',')}|'
         '$_partialSpeaker:$_partialText|${_lines.length}|'
-        '${top?.id}:${top?.score}|$_compromisesDisabled|$_compromiseError';
+        '${top?.id}:${top?.score}|$_compromisesDisabled|$_compromiseError|'
+        '${tone?.lineNumber}.${tone?.sentenceIndex}:${tone?.dominantTone}:'
+        '${tone?.intensity}|$_roomToneDisabled|$_roomToneError|'
+        '$loudnessBucket';
     if (sig == _signature) return;
     _signature = sig;
     notifyListeners();
@@ -401,6 +640,70 @@ class LiveRefController extends ChangeNotifier {
     final rand = math.Random().nextInt(0x7fffffff);
     return '$prefix-$ts-$rand';
   }
+
+  static String _volumeLabel(double loudness) => switch (loudness) {
+    >= 0.82 => 'Very loud',
+    >= 0.62 => 'Loud',
+    >= 0.34 => 'Steady',
+    >= 0.12 => 'Low',
+    _ => 'Quiet',
+  };
+
+  static bool _isHeatedTone(RoomToneAnalyzedEvent analysis) {
+    if (analysis.trend == RoomToneTrend.escalating &&
+        analysis.intensity >= 58) {
+      return true;
+    }
+    return analysis.signals.any(_isHeatedSignal);
+  }
+
+  static bool _isRepairTone(RoomToneAnalyzedEvent analysis) {
+    if (analysis.trend == RoomToneTrend.deEscalating) return true;
+    return analysis.signals.any(_isRepairSignal);
+  }
+
+  static bool _isHeatedSignal(RoomToneSignal signal) => switch (signal) {
+    RoomToneSignal.aggressive ||
+    RoomToneSignal.angry ||
+    RoomToneSignal.accusatory ||
+    RoomToneSignal.dismissive ||
+    RoomToneSignal.defensive ||
+    RoomToneSignal.contemptuous ||
+    RoomToneSignal.interruptive => true,
+    _ => false,
+  };
+
+  static bool _isRepairSignal(RoomToneSignal signal) => switch (signal) {
+    RoomToneSignal.calm ||
+    RoomToneSignal.forgiving ||
+    RoomToneSignal.apologetic ||
+    RoomToneSignal.validating ||
+    RoomToneSignal.compromising ||
+    RoomToneSignal.problemSolving ||
+    RoomToneSignal.repairAttempt => true,
+    _ => false,
+  };
+
+  static String _toneLabel(RoomToneSignal signal) => switch (signal) {
+    RoomToneSignal.aggressive => 'Aggressive',
+    RoomToneSignal.angry => 'Angry',
+    RoomToneSignal.accusatory => 'Accusatory',
+    RoomToneSignal.dismissive => 'Dismissive',
+    RoomToneSignal.defensive => 'Defensive',
+    RoomToneSignal.contemptuous => 'Contemptuous',
+    RoomToneSignal.interruptive => 'Interruptive',
+    RoomToneSignal.hurt => 'Hurt',
+    RoomToneSignal.sad => 'Sad',
+    RoomToneSignal.anxious => 'Anxious',
+    RoomToneSignal.calm => 'Calm',
+    RoomToneSignal.forgiving => 'Forgiving',
+    RoomToneSignal.apologetic => 'Apologetic',
+    RoomToneSignal.validating => 'Validating',
+    RoomToneSignal.compromising => 'Compromising',
+    RoomToneSignal.problemSolving => 'Problem solving',
+    RoomToneSignal.repairAttempt => 'Repair attempt',
+    RoomToneSignal.neutral => 'Neutral',
+  };
 
   static String _normalizeLabel(String? label) =>
       label?.trim().toLowerCase() ?? '';

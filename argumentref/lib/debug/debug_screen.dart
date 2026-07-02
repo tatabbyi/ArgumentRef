@@ -24,7 +24,7 @@ class DebugOverlayButton extends StatelessWidget {
         color: RefPalette.ink.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
-          onTap: _open,
+          onTap: RefHaptics.wrap(_open),
           borderRadius: BorderRadius.circular(10),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),

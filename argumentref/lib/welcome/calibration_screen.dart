@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../audio/audio_session.dart';
+import '../audio/compromise_sound_player.dart';
 import '../audio/live_ref_controller.dart';
 import '../center_ref/center_ref_screen.dart';
 import '../center_ref/referee_guide.dart';
@@ -34,8 +35,15 @@ class CalibrationScreen extends StatefulWidget {
   State<CalibrationScreen> createState() => _CalibrationScreenState();
 }
 
-/// How long a single speaker's read runs.
+/// The most a single speaker's read runs — the ceiling if they keep going. A
+/// read normally ends sooner, the moment the speaker's finished (see
+/// [_CalibrationScreenState._completeRead]).
 const Duration _kReadLength = Duration(seconds: 10);
+
+/// Minimum share of [_kReadLength] to capture before a backend voice match is
+/// allowed to end a read early — a match can land after a word or two, and
+/// cutting the speaker off that fast feels abrupt.
+const double _kMinReadForMatch = 0.3;
 
 /// Where each speaker sits in the calibration flow.
 enum _CalStatus { idle, preparing, recording, done }
@@ -58,12 +66,16 @@ class _CalibrationScreenState extends State<CalibrationScreen>
   @override
   void initState() {
     super.initState();
-    _read = AnimationController(vsync: this, duration: _kReadLength)
-      ..addStatusListener((s) {
-        if (s == AnimationStatus.completed) {
-          setState(() => _status[_index] = _CalStatus.done);
-        }
-      });
+    _read =
+        AnimationController(vsync: this, duration: _kReadLength)
+          ..addStatusListener((s) {
+            // Hitting the ceiling ends the read too — the fallback when nobody taps
+            // and the backend never matches the voice.
+            if (s == AnimationStatus.completed) {
+              setState(() => _status[_index] = _CalStatus.done);
+            }
+          })
+          ..addListener(_maybeAutoFinish);
   }
 
   @override
@@ -79,6 +91,16 @@ class _CalibrationScreenState extends State<CalibrationScreen>
   _CalStatus get _current => _status[_index];
   bool get _isLast => _index == 1;
   bool get _currentMapped => _live?.hasMappedLabel(_name) ?? false;
+
+  /// What tapping the mic does right now: start the read when idle, or end it
+  /// early once it's running (the speaker telling us they've finished).
+  VoidCallback? get _micAction {
+    if (_current == _CalStatus.idle && !(_live?.isProblem ?? false)) {
+      return _startRecording;
+    }
+    if (_current == _CalStatus.recording) return _completeRead;
+    return null;
+  }
 
   /// The line the current speaker reads — personal enough to feel like they're
   /// talking to the ref, varied enough to give the voice model something to
@@ -101,6 +123,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
     final controller = LiveRefController(
       leftName: widget.leftName,
       rightName: widget.rightName,
+      compromiseSoundPlayer: RefereeWhistlePlayer(),
     );
     controller.addListener(_onLive);
     _live = controller;
@@ -140,6 +163,27 @@ class _CalibrationScreenState extends State<CalibrationScreen>
     if (!mounted || _current != _CalStatus.preparing) return;
     setState(() => _status[_index] = _CalStatus.recording);
     _read.forward(from: 0);
+  }
+
+  /// Ends the current read the moment the speaker's finished — they tapped the
+  /// mic, or [_maybeAutoFinish] saw the backend match their voice — instead of
+  /// always waiting out [_kReadLength]. Freezes the ring where it is; the
+  /// meter and countdown fall away with the [_CalStatus.done] state.
+  void _completeRead() {
+    if (_current != _CalStatus.recording) return;
+    _read.stop();
+    setState(() => _status[_index] = _CalStatus.done);
+  }
+
+  /// Runs each frame of the read: once the ref has matched this voice (and
+  /// we've captured at least [_kMinReadForMatch] of the window), wrap up early
+  /// so a finished speaker isn't left waiting on the clock.
+  void _maybeAutoFinish() {
+    if (_current == _CalStatus.recording &&
+        _currentMapped &&
+        _read.value >= _kMinReadForMatch) {
+      _completeRead();
+    }
   }
 
   void _restartCalibration() {
@@ -228,7 +272,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
     final line = switch (_current) {
       _CalStatus.idle => 'Read me a line, $_name — I’ll learn your voice.',
       _CalStatus.preparing => 'Opening the mic…',
-      _CalStatus.recording => 'Listening… keep going.',
+      _CalStatus.recording => 'Listening… tap when you’re done.',
       _CalStatus.done =>
         _currentMapped
             ? 'Got it. That’s $_name matched.'
@@ -387,10 +431,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
                 progress: _current == _CalStatus.done ? 1 : _read.value,
                 secondsLeft:
                     (_kReadLength.inSeconds * (1 - _read.value)).ceil(),
-                onTap:
-                    _current == _CalStatus.idle && !(_live?.isProblem ?? false)
-                        ? _startRecording
-                        : null,
+                onTap: _micAction,
               ),
         ),
         const SizedBox(height: 20),
@@ -444,7 +485,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
         );
       case _CalStatus.recording:
         return Text(
-          'Streaming live. Keep reading until the ring fills.',
+          'Read the line, then tap the mic when you’re finished.',
           textAlign: TextAlign.center,
           style: mulish(size: 13.5, weight: FontWeight.w600, color: _accent),
         );
@@ -478,7 +519,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
 
   Widget _reRecordButton() {
     return InkWell(
-      onTap: _restartCalibration,
+      onTap: RefHaptics.wrap(_restartCalibration),
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -545,7 +586,7 @@ class _MicButton extends StatelessWidget {
     final ringColor = done ? RefPalette.green : accent;
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: RefHaptics.wrap(onTap, haptic: RefHaptic.medium),
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
         width: 128,
@@ -613,14 +654,22 @@ class _MicButton extends StatelessWidget {
       );
     }
     if (recording) {
-      // Count the seconds down so the read has an obvious finish line.
-      return Text(
-        '$secondsLeft',
-        style: zilla(
-          size: 40,
-          weight: FontWeight.w700,
-          color: RefPalette.cream,
-        ),
+      // A stop glyph signals the read can be ended with a tap; the count below
+      // it shows the seconds left before it wraps up on its own.
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.stop_rounded, size: 32, color: RefPalette.cream),
+          const SizedBox(height: 1),
+          Text(
+            '$secondsLeft',
+            style: zilla(
+              size: 17,
+              weight: FontWeight.w700,
+              color: RefPalette.cream.withValues(alpha: 0.9),
+            ),
+          ),
+        ],
       );
     }
     return Icon(Icons.mic_rounded, size: 42, color: accent);

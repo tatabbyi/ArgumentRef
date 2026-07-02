@@ -174,7 +174,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             width: 44,
             child: _step > 0
                 ? IconButton(
-                    onPressed: _back,
+                    onPressed: RefHaptics.wrap(_back),
                     icon: const Icon(Icons.arrow_back_rounded),
                     color: RefPalette.ink,
                     iconSize: 22,
@@ -326,7 +326,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       color: enabled ? RefPalette.green : RefPalette.ink.withValues(alpha: 0.1),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        onTap: enabled ? _addContact : null,
+        onTap: RefHaptics.wrap(enabled ? _addContact : null),
         borderRadius: BorderRadius.circular(14),
         child: SizedBox(
           width: 52,
@@ -500,7 +500,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   Widget _contactChip(Contact c) {
     return GestureDetector(
-      onTap: () => _removeContact(c),
+      onTap: RefHaptics.wrap(() => _removeContact(c)),
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 9, 10, 9),

@@ -106,7 +106,7 @@ This is a free published-fact-check lookup, not an unrestricted truth engine. `n
 ## Phase 5: Compromise Suggestions
 
 Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
-rolling final transcript, checks it after one minute, then every 30 seconds, and
+rolling final transcript, checks it after 30 seconds, then every 30 seconds, and
 emits ranked compromise suggestions to the mobile app.
 
 ```text

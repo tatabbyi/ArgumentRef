@@ -107,6 +107,9 @@ function printEvent(event: ServerEvent): void {
     case 'compromise.suggested':
     case 'compromise.disabled':
     case 'compromise.error':
+    case 'room_tone.analyzed':
+    case 'room_tone.disabled':
+    case 'room_tone.error':
     case 'fallacy.detected':
     case 'fallacy.disabled':
     case 'fallacy.error':
@@ -136,6 +139,25 @@ function printEvent(event: ServerEvent): void {
           ...('reason' in event ? { reason: event.reason } : {}),
           ...('startMs' in event ? { startMs: event.startMs } : {}),
           ...('endMs' in event ? { endMs: event.endMs } : {}),
+        }),
+      );
+      return;
+    case 'interruption.detected':
+      console.log(
+        JSON.stringify({
+          type: event.type,
+          interrupter: event.interrupter,
+          ...(event.interrupterLabel
+            ? { interrupterLabel: event.interrupterLabel }
+            : {}),
+          interrupted: event.interrupted,
+          ...(event.interruptedLabel
+            ? { interruptedLabel: event.interruptedLabel }
+            : {}),
+          overlapMs: event.overlapMs,
+          gapMs: event.gapMs,
+          confidence: event.confidence,
+          reason: event.reason,
         }),
       );
       return;
