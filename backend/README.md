@@ -171,6 +171,8 @@ PORT=8081
 HOST=0.0.0.0
 AUDIO_STORAGE_DIR=data/sessions
 MAX_AUDIO_CHUNK_BYTES=1048576
+DATABASE_URL=
+DATABASE_SSL=false
 DEEPGRAM_API_KEY=
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
@@ -244,6 +246,19 @@ Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do
 Add `GEMINI_API_KEY` there too to activate compromise suggestions. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
+
+Add `DATABASE_URL` in Render's Environment tab to activate Postgres history. Use Render's internal database URL when the database and backend are in the same Render account/region. Keep `DATABASE_SSL=false` for the internal URL unless Render gives you a URL with `sslmode=require`.
+
+When `DATABASE_URL` is configured, the backend creates these tables automatically on first history write:
+
+- `history_sessions`
+- `history_streams`
+- `history_events`
+- `transcript_lines`
+- `detected_claims`
+- `fact_checks`
+- `compromise_suggestions`
+- `speaker_mappings`
 
 For the first mobile-to-Deepgram test, send raw PCM 16-bit mono audio:
 

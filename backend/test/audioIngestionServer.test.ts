@@ -18,6 +18,7 @@ describe('audio ingestion websocket', () => {
       port: 0,
       audioStorageDir: storageDir,
       maxAudioChunkBytes: 1024 * 1024,
+      databaseSsl: false,
       deepgramModel: 'nova-3',
       deepgramLanguage: 'en-US',
       factCheckEnabled: false,

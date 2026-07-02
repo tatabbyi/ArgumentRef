@@ -19,6 +19,10 @@ import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
 import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
+import {
+  createHistoryStore,
+  type HistoryStore,
+} from '../history/historyStore.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
@@ -34,6 +38,7 @@ export interface AudioIngestionServer {
 
 export function createAudioIngestionServer(config: AppConfig): AudioIngestionServer {
   const sessionStore = new SessionStore(config.audioStorageDir);
+  const historyStore = createHistoryStore(config);
   const httpServer = createServer(handleHttpRequest);
   const webSocketServer = new WebSocketServer({
     noServer: true,
@@ -55,7 +60,7 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
   });
 
   webSocketServer.on('connection', (webSocket, request) => {
-    void handleAudioConnection(webSocket, request, sessionStore, config);
+    void handleAudioConnection(webSocket, request, sessionStore, historyStore, config);
   });
 
   return {
@@ -87,6 +92,7 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
           });
         });
       });
+      await historyStore.close();
     },
     address: () => httpServer.address(),
   };
@@ -111,6 +117,7 @@ async function handleAudioConnection(
   webSocket: WebSocket,
   request: IncomingMessage,
   sessionStore: SessionStore,
+  historyStore: HistoryStore,
   config: AppConfig,
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
@@ -122,11 +129,15 @@ async function handleAudioConnection(
   });
   const claimDetector = new ClaimDetector();
   const factCheckService = createFactCheckService(config);
+  const emitClientEvent = (event: ServerEvent) => {
+    sendEvent(webSocket, event);
+    recordHistoryEvent(historyStore, event);
+  };
   const compromiseAdvisor = new CompromiseAdvisor({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
     config,
-    emit: (event) => sendEvent(webSocket, event),
+    emit: emitClientEvent,
   });
   const debriefer = new ConversationDebriefer({
     sessionId: recorder.sessionId,
@@ -145,27 +156,25 @@ async function handleAudioConnection(
     if (event.type === 'transcript.partial' || event.type === 'transcript.final') {
       const labelled = speakerLabeler.labelTranscript(event);
       if (labelled.mapping) {
-        sendEvent(webSocket, labelled.mapping);
+        emitClientEvent(labelled.mapping);
       }
 
-      sendEvent(webSocket, labelled.event);
+      emitClientEvent(labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
         compromiseAdvisor.recordTranscript(labelled.event);
         debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
         if (claim) {
-          sendEvent(webSocket, claim);
-          factCheckService.checkClaim(claim, (factCheckEvent) => {
-            sendEvent(webSocket, factCheckEvent);
-          });
+          emitClientEvent(claim);
+          factCheckService.checkClaim(claim, emitClientEvent);
         }
       }
 
       return;
     }
 
-    sendEvent(webSocket, event);
+    emitClientEvent(event);
   };
 
   emitEvent({
@@ -195,6 +204,7 @@ async function handleAudioConnection(
       transcriber,
       compromiseAdvisor,
       debriefer,
+      historyStore,
       sendEnded,
     });
     return ending;
@@ -291,26 +301,30 @@ async function endSession(options: {
   transcriber: Transcriber;
   compromiseAdvisor: CompromiseAdvisor;
   debriefer: ConversationDebriefer;
+  historyStore: HistoryStore;
   sendEnded: boolean;
 }): Promise<void> {
   options.compromiseAdvisor.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();
   const debrief = await options.debriefer.finish(snapshot);
+  const endedEvent: ServerEvent = {
+    type: 'session.ended',
+    sessionId: snapshot.sessionId,
+    streamId: snapshot.streamId,
+    participantId: snapshot.participantId,
+    bytesReceived: snapshot.bytesReceived,
+    chunksReceived: snapshot.chunksReceived,
+    storagePath: snapshot.filePath,
+    debriefStoragePath: debrief.debriefPath,
+    profileStoragePath: debrief.profilePath,
+    debriefStatus: debrief.status,
+  };
+
+  await recordHistoryEvent(options.historyStore, endedEvent);
 
   if (options.sendEnded) {
-    sendEvent(options.webSocket, {
-      type: 'session.ended',
-      sessionId: snapshot.sessionId,
-      streamId: snapshot.streamId,
-      participantId: snapshot.participantId,
-      bytesReceived: snapshot.bytesReceived,
-      chunksReceived: snapshot.chunksReceived,
-      storagePath: snapshot.filePath,
-      debriefStoragePath: debrief.debriefPath,
-      profileStoragePath: debrief.profilePath,
-      debriefStatus: debrief.status,
-    });
+    sendEvent(options.webSocket, endedEvent);
     options.webSocket.close(1000, 'session stopped');
   }
 }
@@ -333,6 +347,19 @@ function sendEvent(webSocket: WebSocket, event: ServerEvent): void {
   if (webSocket.readyState === WebSocket.OPEN) {
     webSocket.send(serializeServerEvent(event));
   }
+}
+
+function recordHistoryEvent(
+  historyStore: HistoryStore,
+  event: ServerEvent,
+): Promise<void> {
+  return historyStore.recordEvent(event).catch((error: unknown) => {
+    console.warn(
+      `History write failed for ${event.type}: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    );
+  });
 }
 
 function sendError(webSocket: WebSocket, error: unknown): void {

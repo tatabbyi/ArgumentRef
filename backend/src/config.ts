@@ -5,6 +5,8 @@ export interface AppConfig {
   port: number;
   audioStorageDir: string;
   maxAudioChunkBytes: number;
+  databaseUrl?: string;
+  databaseSsl: boolean;
   deepgramApiKey?: string;
   deepgramModel: string;
   deepgramLanguage: string;
@@ -26,6 +28,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: readNumber(env.PORT, 8081),
     audioStorageDir: path.resolve(env.AUDIO_STORAGE_DIR ?? 'data/sessions'),
     maxAudioChunkBytes: readNumber(env.MAX_AUDIO_CHUNK_BYTES, 1024 * 1024),
+    databaseUrl: env.DATABASE_URL,
+    databaseSsl: readBoolean(
+      env.DATABASE_SSL,
+      databaseUrlRequestsSsl(env.DATABASE_URL),
+    ),
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     deepgramModel: env.DEEPGRAM_MODEL ?? 'nova-3',
     deepgramLanguage: env.DEEPGRAM_LANGUAGE ?? 'en-US',
@@ -63,4 +70,17 @@ function readBoolean(value: string | undefined, fallback: boolean): boolean {
   }
 
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function databaseUrlRequestsSsl(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.searchParams.get('sslmode') === 'require';
+  } catch {
+    return false;
+  }
 }
