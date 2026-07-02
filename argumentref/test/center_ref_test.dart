@@ -274,6 +274,64 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('WHY IT COULD WORK'), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
+      expect(find.text('Two-week trial'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('collapses untouched compromise cards after five seconds', (
+      tester,
+    ) async {
+      final controller = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        session: _QuietAudioSession(),
+      );
+      controller.onEventForTest(
+        const CompromiseSuggestedEvent(
+          model: 'gemini-3.5-flash',
+          generatedAt: '2026-07-02T12:00:00Z',
+          transcriptLineCount: 4,
+          suggestions: [
+            CompromiseSuggestion(
+              id: 'compromise-1',
+              rank: 1,
+              title: 'Two-week trial',
+              summary: 'Try the plan for two weeks and review it.',
+              whyItCouldWork: 'It lowers the risk for both people.',
+              score: 94,
+              quality: CompromiseQuality.reallyGood,
+              pushLevel: CompromisePushLevel.urgent,
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CenterRefScreen(
+              leftName: 'Ada',
+              rightName: 'Ben',
+              liveController: controller,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Two-week trial'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 5));
+
+      expect(find.text('Two-week trial'), findsNothing);
+      expect(find.text('Compromises ready - tap to view'), findsOneWidget);
+
+      await tester.tap(find.text('Compromises ready - tap to view'));
+      await tester.pump();
+
+      expect(find.text('Two-week trial'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });

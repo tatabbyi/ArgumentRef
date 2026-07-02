@@ -339,6 +339,7 @@ async function handleAudioConnection(
         emitClientEvent(labelled.mapping);
       }
 
+      logTranscript(labelled.event);
       emitClientEvent(labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
@@ -651,6 +652,16 @@ function rawDataToBuffer(data: WebSocket.RawData): Buffer {
   }
 
   return Buffer.concat(data);
+}
+
+function logTranscript(
+  event: Extract<ServerEvent, { type: 'transcript.partial' | 'transcript.final' }>,
+): void {
+  const user = event.speakerLabel
+    ? `${event.speakerLabel} (${event.speaker})`
+    : event.speaker;
+
+  console.log(`[${event.type}] ${user}: ${event.text}`);
 }
 
 function audioFormatFromUrl(url: URL): AudioFormat {

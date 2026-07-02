@@ -69,11 +69,15 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   Timer? _beatTimer;
   Timer? _blinkTimer;
   Timer? _saccadeTimer;
+  Timer? _compromiseAutoCollapseTimer;
   final _random = math.Random();
 
   int _beatIndex = 0;
   bool _blinking = false;
   double _saccadeJitter = 0;
+  String? _visibleCompromiseSetKey;
+  bool _compromisePanelExpanded = false;
+  bool _compromiseSetClicked = false;
 
   /// The live pipeline, created only in live mode. Null → scripted demo.
   LiveRefController? _live;
@@ -124,6 +128,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
       // bubble aloud (calibration leaves this off so it stays quiet).
       controller.voiceEnabled = true;
       controller.addListener(_onLive);
+      _syncCompromisePanelState();
       // Fire-and-forget: status/errors surface through the controller's state.
       unawaited(controller.start());
     } else {
@@ -134,7 +139,51 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   }
 
   void _onLive() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _syncCompromisePanelState();
+    setState(() {});
+  }
+
+  void _syncCompromisePanelState() {
+    final suggestions = _live?.compromises ?? const <CompromiseSuggestion>[];
+    if (suggestions.isEmpty) {
+      _compromiseAutoCollapseTimer?.cancel();
+      _visibleCompromiseSetKey = null;
+      _compromisePanelExpanded = false;
+      _compromiseSetClicked = false;
+      return;
+    }
+
+    final key = _compromiseSetKey(suggestions);
+    if (key == _visibleCompromiseSetKey) return;
+
+    _visibleCompromiseSetKey = key;
+    _compromisePanelExpanded = true;
+    _compromiseSetClicked = false;
+    _compromiseAutoCollapseTimer?.cancel();
+    _compromiseAutoCollapseTimer = Timer(
+      const Duration(seconds: 5),
+      () => _collapseCompromisesIfUnclicked(key),
+    );
+  }
+
+  String _compromiseSetKey(List<CompromiseSuggestion> suggestions) {
+    return suggestions
+        .map((suggestion) => '${suggestion.id}:${suggestion.score}')
+        .join('|');
+  }
+
+  void _collapseCompromisesIfUnclicked(String key) {
+    if (!mounted || key != _visibleCompromiseSetKey || _compromiseSetClicked) {
+      return;
+    }
+
+    setState(() => _compromisePanelExpanded = false);
+  }
+
+  void _expandCompromisePanel() {
+    if (_live?.compromises.isEmpty ?? true) return;
+    setState(() => _compromisePanelExpanded = true);
   }
 
   AnimationController _repeat(Duration period, {bool reverse = false}) {
@@ -172,6 +221,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     _beatTimer?.cancel();
     _blinkTimer?.cancel();
     _saccadeTimer?.cancel();
+    _compromiseAutoCollapseTimer?.cancel();
     _live?.removeListener(_onLive);
     _live?.dispose();
     _breathe.dispose();
@@ -308,78 +358,88 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     final suggestions = live.compromises;
     final status = live.compromiseStatusLabel;
     final hasSuggestions = suggestions.isNotEmpty;
+    final showSuggestions = hasSuggestions && _compromisePanelExpanded;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      height: hasSuggestions ? _compromisePanelHeight(context) : 62,
-      margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
-      padding:
-          hasSuggestions
-              ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
-              : const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: RefPalette.cream,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: RefPalette.ink.withValues(alpha: 0.12)),
-        boxShadow: [
-          BoxShadow(
-            color: RefPalette.ink.withValues(alpha: 0.06),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child:
-          !hasSuggestions
-              ? Center(
-                child: Text(
-                  status ?? 'Listening for a fair deal.',
-                  textAlign: TextAlign.center,
-                  style: mulish(
-                    size: 12.5,
-                    weight: FontWeight.w700,
-                    color: RefPalette.ink.withValues(alpha: 0.48),
-                  ),
-                ),
-              )
-              : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'COMPROMISES',
-                        style: mulish(
-                          size: 10,
-                          weight: FontWeight.w800,
-                          color: RefPalette.ink.withValues(alpha: 0.48),
-                        ),
-                      ),
-                      Text(
-                        '${suggestions.first.score}/100',
-                        style: mulish(
-                          size: 10.5,
-                          weight: FontWeight.w800,
-                          color: _compromiseColor(suggestions.first),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: ListView.separated(
-                      padding: EdgeInsets.zero,
-                      itemCount: suggestions.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder:
-                          (context, index) =>
-                              _compromiseTile(suggestions[index]),
+    return GestureDetector(
+      onTap: hasSuggestions && !showSuggestions ? _expandCompromisePanel : null,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        height: showSuggestions ? _compromisePanelHeight(context) : 62,
+        margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
+        padding:
+            showSuggestions
+                ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
+                : const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: RefPalette.cream,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: RefPalette.ink.withValues(alpha: 0.12)),
+          boxShadow: [
+            BoxShadow(
+              color: RefPalette.ink.withValues(alpha: 0.06),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child:
+            !showSuggestions
+                ? Center(
+                  child: Text(
+                    hasSuggestions
+                        ? 'Compromises ready - tap to view'
+                        : status ?? 'Listening for a fair deal.',
+                    textAlign: TextAlign.center,
+                    style: mulish(
+                      size: 12.5,
+                      weight: FontWeight.w700,
+                      color:
+                          hasSuggestions
+                              ? _compromiseColor(suggestions.first)
+                              : RefPalette.ink.withValues(alpha: 0.48),
                     ),
                   ),
-                ],
-              ),
+                )
+                : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'COMPROMISES',
+                          style: mulish(
+                            size: 10,
+                            weight: FontWeight.w800,
+                            color: RefPalette.ink.withValues(alpha: 0.48),
+                          ),
+                        ),
+                        Text(
+                          '${suggestions.first.score}/100',
+                          style: mulish(
+                            size: 10.5,
+                            weight: FontWeight.w800,
+                            color: _compromiseColor(suggestions.first),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: ListView.separated(
+                        padding: EdgeInsets.zero,
+                        itemCount: suggestions.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemBuilder:
+                            (context, index) =>
+                                _compromiseTile(suggestions[index]),
+                      ),
+                    ),
+                  ],
+                ),
+      ),
     );
   }
 
@@ -496,6 +556,8 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   }
 
   void _showCompromiseDetails(CompromiseSuggestion suggestion) {
+    _compromiseSetClicked = true;
+    _compromiseAutoCollapseTimer?.cancel();
     final color = _compromiseColor(suggestion);
     final label = _compromiseLabel(suggestion);
 

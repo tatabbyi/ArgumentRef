@@ -650,6 +650,10 @@ class LiveRefController extends ChangeNotifier {
         now.difference(_lastActivityAt).inMilliseconds > _idleGapMs;
     _concerned = now.isBefore(_concernUntil);
 
+    // Runs every tick (not just on signature changes) so a call held back for a
+    // lull actually gets spoken once the natural break arrives.
+    _maybeVoiceCaption();
+
     final active = _idle ? Speaker.none : _activeSpeaker;
     final mappedLabels = _mappedLabels.toList()..sort();
     final top = topCompromise;
@@ -668,21 +672,23 @@ class LiveRefController extends ChangeNotifier {
         '$loudnessBucket';
     if (sig == _signature) return;
     _signature = sig;
-    _maybeVoiceCaption();
     notifyListeners();
   }
 
-  /// Reads the ref's live *intervention* aloud — but only when it's a real call
-  /// and the room gives it room to speak.
+  /// Reads the ref's live *intervention* aloud — but only when it's a real call,
+  /// and with a cadence that fits what kind of call it is.
   ///
-  /// Three guards keep it from talking over the conversation:
-  /// 1. **What** — only intervention moods (a cut-in flag, or a compromise) are
-  ///    voiced; the routine "Go on, X" / "Your turn, Y" turn cues stay on-screen
-  ///    only, so the ref isn't narrating every hand-off.
-  /// 2. **When** — it waits for a natural break ([_voiceSettle] of quiet) rather
-  ///    than cutting across whoever currently holds the floor.
-  /// 3. **How often** — a [_voiceCooldown] between calls so it never rattles off
-  ///    guidance back-to-back.
+  /// - **What** — only intervention moods are voiced; the routine "Go on, X" /
+  ///   "Your turn, Y" turn cues stay on-screen only, so the ref isn't narrating
+  ///   every hand-off.
+  /// - **Cut-in flags** ([Mood.concern] — "Let X finish" / "One at a time") are
+  ///   what a ref actually raises their voice for, so they're spoken promptly
+  ///   (even over the overlap) and re-asserted only after the [_voiceCooldown].
+  /// - **Compromises** ([Mood.alert] / [Mood.approve]) aren't urgent, so each
+  ///   distinct one is announced once and only in a lull ([_voiceSettle] of
+  ///   quiet) rather than cutting across whoever holds the floor.
+  /// - **How often** — a [_voiceCooldown] between any two calls so the ref never
+  ///   rattles off guidance back-to-back.
   void _maybeVoiceCaption() {
     if (!voiceEnabled) return;
 
@@ -692,18 +698,27 @@ class LiveRefController extends ChangeNotifier {
     final spoken = current.caption
         .replaceAll('{L}', leftName)
         .replaceAll('{R}', rightName);
-    if (spoken.isEmpty || spoken == _lastVoicedCaption) return;
+    if (spoken.isEmpty) return;
 
     final now = DateTime.now();
-    // Hold until there's a lull — the active speaker has paused (or the floor is
-    // idle) — so the ref slips its call into a natural break.
-    final quietFor = now.difference(_lastActivityAt);
-    if (!_idle && quietFor < _voiceSettle) return;
     if (now.difference(_lastVoicedAt) < _voiceCooldown) return;
 
-    _lastVoicedCaption = spoken;
-    _lastVoicedAt = now;
-    unawaited(_voice.speak(spoken));
+    if (current.mood == Mood.concern) {
+      // A cut-in — interject now; the cooldown alone spaces out repeats.
+      _voiceLine(spoken, now);
+      return;
+    }
+
+    // A compromise — announce each distinct one once, and only at a lull.
+    if (spoken == _lastVoicedCaption) return;
+    if (!_idle && now.difference(_lastActivityAt) < _voiceSettle) return;
+    _voiceLine(spoken, now);
+  }
+
+  void _voiceLine(String line, DateTime at) {
+    _lastVoicedCaption = line;
+    _lastVoicedAt = at;
+    unawaited(_voice.speak(line));
   }
 
   /// The ref only speaks when it actually has a call to make: a cut-in flag
