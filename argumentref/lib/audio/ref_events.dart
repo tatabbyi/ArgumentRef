@@ -53,6 +53,28 @@ sealed class RefEvent {
           text: _str(decoded['text']).trim(),
           confidence: _doubleOrNull(decoded['confidence']),
         );
+      case 'interruption.detected':
+        return InterruptionDetectedEvent(
+          interrupter: _str(
+            decoded['interrupter'],
+            fallback: 'speaker_unknown',
+          ),
+          interrupterLabel: _strOrNull(decoded['interrupterLabel']),
+          interrupted: _str(
+            decoded['interrupted'],
+            fallback: 'speaker_unknown',
+          ),
+          interruptedLabel: _strOrNull(decoded['interruptedLabel']),
+          interrupterText: _str(decoded['interrupterText']).trim(),
+          interruptedText: _str(decoded['interruptedText']).trim(),
+          overlapMs: _int(decoded['overlapMs']),
+          gapMs: _int(decoded['gapMs']),
+          confidence:
+              (_doubleOrNull(decoded['confidence']) ?? 0)
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
+          reason: _str(decoded['reason']),
+        );
       case 'compromise.suggested':
         return CompromiseSuggestedEvent(
           model: _str(decoded['model']),
@@ -64,6 +86,30 @@ sealed class RefEvent {
         return CompromiseDisabledEvent(_str(decoded['reason']));
       case 'compromise.error':
         return CompromiseErrorEvent(_str(decoded['message']));
+      case 'room_tone.analyzed':
+        return RoomToneAnalyzedEvent(
+          model: _str(decoded['model']),
+          generatedAt: _str(decoded['generatedAt']),
+          lineNumber: _positiveInt(decoded['lineNumber'], fallback: 1),
+          sentenceIndex: _positiveInt(decoded['sentenceIndex'], fallback: 1),
+          speaker: _str(decoded['speaker'], fallback: 'speaker_unknown'),
+          speakerLabel: _strOrNull(decoded['speakerLabel']),
+          text: _str(decoded['text']).trim(),
+          dominantTone: _roomToneSignal(decoded['dominantTone']),
+          trend: _roomToneTrend(decoded['trend']),
+          intensity: _score(decoded['intensity']),
+          confidence:
+              (_doubleOrNull(decoded['confidence']) ?? 0)
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
+          summary: _str(decoded['summary']).trim(),
+          signals: _roomToneSignals(decoded['signals']),
+          phrases: _roomTonePhrases(decoded['phrases']),
+        );
+      case 'room_tone.disabled':
+        return RoomToneDisabledEvent(_str(decoded['reason']));
+      case 'room_tone.error':
+        return RoomToneErrorEvent(_str(decoded['message']));
       case 'speaker.diarization_status':
         return SpeakerDiarizationStatusEvent(
           status: _str(decoded['status']),
@@ -164,6 +210,34 @@ class TranscriptEvent extends RefEvent {
   bool get isEmpty => text.isEmpty;
 }
 
+/// A backend-timed cut-in where one diarized speaker starts before, or very
+/// tightly after, another speaker had clearly finished.
+class InterruptionDetectedEvent extends RefEvent {
+  const InterruptionDetectedEvent({
+    required this.interrupter,
+    this.interrupterLabel,
+    required this.interrupted,
+    this.interruptedLabel,
+    required this.interrupterText,
+    required this.interruptedText,
+    required this.overlapMs,
+    required this.gapMs,
+    required this.confidence,
+    required this.reason,
+  });
+
+  final String interrupter;
+  final String? interrupterLabel;
+  final String interrupted;
+  final String? interruptedLabel;
+  final String interrupterText;
+  final String interruptedText;
+  final int overlapMs;
+  final int gapMs;
+  final double confidence;
+  final String reason;
+}
+
 enum CompromiseQuality { weak, promising, strong, reallyGood }
 
 enum CompromisePushLevel { normal, firm, urgent }
@@ -221,6 +295,86 @@ class CompromiseDisabledEvent extends RefEvent {
 /// Gemini or compromise analysis failed mid-session.
 class CompromiseErrorEvent extends RefEvent {
   const CompromiseErrorEvent(this.message);
+
+  final String message;
+}
+
+enum RoomToneSignal {
+  aggressive,
+  angry,
+  accusatory,
+  dismissive,
+  defensive,
+  contemptuous,
+  interruptive,
+  hurt,
+  sad,
+  anxious,
+  calm,
+  forgiving,
+  apologetic,
+  validating,
+  compromising,
+  problemSolving,
+  repairAttempt,
+  neutral,
+}
+
+enum RoomToneTrend { escalating, deEscalating, neutral }
+
+class RoomTonePhrase {
+  const RoomTonePhrase({required this.text, required this.signal});
+
+  final String text;
+  final RoomToneSignal signal;
+}
+
+/// A fast Gemini tone reading for one final sentence, with a few previous
+/// sentences used as context on the backend.
+class RoomToneAnalyzedEvent extends RefEvent {
+  const RoomToneAnalyzedEvent({
+    required this.model,
+    required this.generatedAt,
+    required this.lineNumber,
+    required this.sentenceIndex,
+    required this.speaker,
+    this.speakerLabel,
+    required this.text,
+    required this.dominantTone,
+    required this.trend,
+    required this.intensity,
+    required this.confidence,
+    required this.summary,
+    required this.signals,
+    required this.phrases,
+  });
+
+  final String model;
+  final String generatedAt;
+  final int lineNumber;
+  final int sentenceIndex;
+  final String speaker;
+  final String? speakerLabel;
+  final String text;
+  final RoomToneSignal dominantTone;
+  final RoomToneTrend trend;
+  final int intensity;
+  final double confidence;
+  final String summary;
+  final List<RoomToneSignal> signals;
+  final List<RoomTonePhrase> phrases;
+}
+
+/// The backend has no `GEMINI_API_KEY`, so AI tone analysis is off.
+class RoomToneDisabledEvent extends RefEvent {
+  const RoomToneDisabledEvent(this.reason);
+
+  final String reason;
+}
+
+/// Gemini room-tone analysis failed mid-session.
+class RoomToneErrorEvent extends RefEvent {
+  const RoomToneErrorEvent(this.message);
 
   final String message;
 }
@@ -340,6 +494,54 @@ CompromisePushLevel _pushLevel(Object? value) => switch (_str(value)) {
   'firm' => CompromisePushLevel.firm,
   _ => CompromisePushLevel.normal,
 };
+
+RoomToneSignal _roomToneSignal(Object? value) => switch (_str(value)) {
+  'aggressive' => RoomToneSignal.aggressive,
+  'angry' => RoomToneSignal.angry,
+  'accusatory' => RoomToneSignal.accusatory,
+  'dismissive' => RoomToneSignal.dismissive,
+  'defensive' => RoomToneSignal.defensive,
+  'contemptuous' => RoomToneSignal.contemptuous,
+  'interruptive' => RoomToneSignal.interruptive,
+  'hurt' => RoomToneSignal.hurt,
+  'sad' => RoomToneSignal.sad,
+  'anxious' => RoomToneSignal.anxious,
+  'calm' => RoomToneSignal.calm,
+  'forgiving' => RoomToneSignal.forgiving,
+  'apologetic' => RoomToneSignal.apologetic,
+  'validating' => RoomToneSignal.validating,
+  'compromising' => RoomToneSignal.compromising,
+  'problem_solving' => RoomToneSignal.problemSolving,
+  'repair_attempt' => RoomToneSignal.repairAttempt,
+  _ => RoomToneSignal.neutral,
+};
+
+RoomToneTrend _roomToneTrend(Object? value) => switch (_str(value)) {
+  'escalating' => RoomToneTrend.escalating,
+  'de_escalating' => RoomToneTrend.deEscalating,
+  _ => RoomToneTrend.neutral,
+};
+
+List<RoomToneSignal> _roomToneSignals(Object? value) {
+  if (value is! List) return const [RoomToneSignal.neutral];
+  final signals = [for (final item in value) _roomToneSignal(item)];
+  return signals.isEmpty ? const [RoomToneSignal.neutral] : signals;
+}
+
+List<RoomTonePhrase> _roomTonePhrases(Object? value) {
+  if (value is! List) return const [];
+  return [
+    for (final item in value)
+      if (_roomTonePhrase(item) case final phrase?) phrase,
+  ];
+}
+
+RoomTonePhrase? _roomTonePhrase(Object? value) {
+  if (value is! Map<String, dynamic>) return null;
+  final text = _str(value['text']).trim();
+  if (text.isEmpty) return null;
+  return RoomTonePhrase(text: text, signal: _roomToneSignal(value['signal']));
+}
 
 List<String> _stringList(Object? value) {
   if (value is! List) return const [];

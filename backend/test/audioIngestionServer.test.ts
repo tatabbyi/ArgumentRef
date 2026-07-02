@@ -26,7 +26,8 @@ describe('audio ingestion websocket', () => {
       googleFactCheckPageSize: 3,
       factCheckMaxClaimsPerSession: 5,
       geminiModel: 'gemini-3.5-flash',
-      compromiseInitialDelayMs: 60_000,
+      roomToneGeminiModel: 'gemini-3.1-flash-lite',
+      compromiseInitialDelayMs: 30_000,
       compromiseIntervalMs: 30_000,
     });
     port = await server.listen();

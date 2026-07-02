@@ -1,4 +1,5 @@
 import 'package:argumentref/audio/live_ref_controller.dart';
+import 'package:argumentref/audio/compromise_sound_player.dart';
 import 'package:argumentref/audio/ref_events.dart';
 import 'package:argumentref/center_ref/beats.dart';
 import 'package:argumentref/config/backend_config.dart';
@@ -50,6 +51,27 @@ void main() {
       expect(t.isFinal, isFalse);
     });
 
+    test('parses directional interruption events', () {
+      final event = RefEvent.parse(
+        '{"type":"interruption.detected","provider":"argumentref",'
+        '"interrupter":"speaker_1","interrupterLabel":"Ben",'
+        '"interrupted":"speaker_0","interruptedLabel":"Ada",'
+        '"interrupterText":"No that is not fair",'
+        '"interruptedText":"I was trying to explain this because",'
+        '"overlapMs":450,"gapMs":0,"confidence":0.84,'
+        '"reason":"speaker_overlap"}',
+      );
+
+      expect(event, isA<InterruptionDetectedEvent>());
+      final cutIn = event as InterruptionDetectedEvent;
+      expect(cutIn.interrupter, 'speaker_1');
+      expect(cutIn.interrupterLabel, 'Ben');
+      expect(cutIn.interrupted, 'speaker_0');
+      expect(cutIn.interruptedLabel, 'Ada');
+      expect(cutIn.overlapMs, 450);
+      expect(cutIn.confidence, closeTo(0.84, 1e-9));
+    });
+
     test('parses transcription.disabled', () {
       final event = RefEvent.parse(
         '{"type":"transcription.disabled","reason":"no key"}',
@@ -85,6 +107,30 @@ void main() {
       expect(compromise.quality, CompromiseQuality.reallyGood);
       expect(compromise.pushLevel, CompromisePushLevel.urgent);
       expect(compromise.shouldPushHard, isTrue);
+    });
+
+    test('parses room tone analysis', () {
+      final event = RefEvent.parse(
+        '{"type":"room_tone.analyzed","provider":"gemini",'
+        '"model":"gemini-3.1-flash-lite",'
+        '"generatedAt":"2026-07-02T12:00:00Z",'
+        '"lineNumber":2,"sentenceIndex":1,"speaker":"speaker_0",'
+        '"speakerLabel":"Ada","text":"You never listen.",'
+        '"dominantTone":"angry","trend":"escalating","intensity":86,'
+        '"confidence":0.91,"summary":"Sharp accusation",'
+        '"signals":["angry","accusatory"],'
+        '"phrases":[{"text":"never listen","signal":"accusatory"}]}',
+      );
+
+      expect(event, isA<RoomToneAnalyzedEvent>());
+      final tone = event as RoomToneAnalyzedEvent;
+      expect(tone.model, 'gemini-3.1-flash-lite');
+      expect(tone.speakerLabel, 'Ada');
+      expect(tone.dominantTone, RoomToneSignal.angry);
+      expect(tone.trend, RoomToneTrend.escalating);
+      expect(tone.intensity, 86);
+      expect(tone.signals, [RoomToneSignal.angry, RoomToneSignal.accusatory]);
+      expect(tone.phrases.single.signal, RoomToneSignal.accusatory);
     });
 
     test('unknown and malformed frames never throw', () {
@@ -192,6 +238,38 @@ void main() {
       expect(c.transcript.single.speaker, Speaker.left);
     });
 
+    test('tracks who cut off who from backend interruption events', () {
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+      );
+      addTearDown(c.dispose);
+
+      c.onEventForTest(
+        const InterruptionDetectedEvent(
+          interrupter: 'speaker_1',
+          interrupterLabel: 'Ben',
+          interrupted: 'speaker_0',
+          interruptedLabel: 'Ada',
+          interrupterText: 'No that is not fair',
+          interruptedText: 'I was trying to explain this because',
+          overlapMs: 450,
+          gapMs: 0,
+          confidence: 0.84,
+          reason: 'speaker_overlap',
+        ),
+      );
+
+      expect(c.cutIns, 1);
+      expect(c.interruptions.leftCutRight, 0);
+      expect(c.interruptions.rightCutLeft, 1);
+      expect(c.interruptions.latest?.interrupter, Speaker.right);
+      expect(c.interruptions.latest?.interrupted, Speaker.left);
+      expect(c.beat.caption, 'Let {L} finish');
+    });
+
     test('really good compromises take over the live guidance', () {
       final c = LiveRefController(
         leftName: 'Ada',
@@ -225,6 +303,118 @@ void main() {
       expect(c.beat.caption, 'Try this deal now: Two-week trial');
       expect(c.beat.mood, Mood.alert);
     });
+
+    test('new top compromises play the referee whistle once', () {
+      final soundPlayer = _FakeCompromiseSoundPlayer();
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+        compromiseSoundPlayer: soundPlayer,
+      );
+      addTearDown(c.dispose);
+
+      c.onEventForTest(
+        const CompromiseSuggestedEvent(
+          model: 'gemini-3.5-flash',
+          generatedAt: '2026-07-02T12:00:00Z',
+          transcriptLineCount: 4,
+          suggestions: [
+            CompromiseSuggestion(
+              id: 'compromise-1',
+              rank: 1,
+              title: 'Two-week trial',
+              summary: 'Try the plan for two weeks and review it.',
+              whyItCouldWork: 'It lowers the risk for both people.',
+              score: 94,
+              quality: CompromiseQuality.reallyGood,
+              pushLevel: CompromisePushLevel.urgent,
+            ),
+          ],
+        ),
+      );
+      c.onEventForTest(
+        const CompromiseSuggestedEvent(
+          model: 'gemini-3.5-flash',
+          generatedAt: '2026-07-02T12:00:30Z',
+          transcriptLineCount: 5,
+          suggestions: [
+            CompromiseSuggestion(
+              id: 'compromise-1',
+              rank: 1,
+              title: 'Two-week trial',
+              summary: 'Try the plan for two weeks and review it.',
+              whyItCouldWork: 'It lowers the risk for both people.',
+              score: 93,
+              quality: CompromiseQuality.reallyGood,
+              pushLevel: CompromisePushLevel.urgent,
+            ),
+          ],
+        ),
+      );
+      c.onEventForTest(
+        const CompromiseSuggestedEvent(
+          model: 'gemini-3.5-flash',
+          generatedAt: '2026-07-02T12:01:00Z',
+          transcriptLineCount: 6,
+          suggestions: [
+            CompromiseSuggestion(
+              id: 'compromise-2',
+              rank: 1,
+              title: 'Trade nights',
+              summary: 'Alternate who gets first choice each night.',
+              whyItCouldWork: 'It shares priority fairly.',
+              score: 86,
+              quality: CompromiseQuality.strong,
+              pushLevel: CompromisePushLevel.firm,
+            ),
+          ],
+        ),
+      );
+
+      expect(soundPlayer.playCount, 2);
+    });
+
+    test('room tone status reflects the latest Gemini tone reading', () {
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+      );
+      addTearDown(c.dispose);
+
+      c.onEventForTest(
+        const RoomToneAnalyzedEvent(
+          model: 'gemini-3.1-flash-lite',
+          generatedAt: '2026-07-02T12:00:00Z',
+          lineNumber: 1,
+          sentenceIndex: 1,
+          speaker: 'speaker_0',
+          text: 'You never listen.',
+          dominantTone: RoomToneSignal.angry,
+          trend: RoomToneTrend.escalating,
+          intensity: 84,
+          confidence: 0.92,
+          summary: 'Sharp accusation',
+          signals: [RoomToneSignal.angry, RoomToneSignal.accusatory],
+          phrases: [
+            RoomTonePhrase(
+              text: 'never listen',
+              signal: RoomToneSignal.accusatory,
+            ),
+          ],
+        ),
+      );
+
+      final tone = c.roomTone;
+      expect(tone.label, 'Angry');
+      expect(tone.detail, contains('Sharp accusation'));
+      expect(tone.score, 84);
+      expect(tone.isHeated, isTrue);
+      expect(tone.hasAiSignal, isTrue);
+    });
   });
 
   group('BackendConfig', () {
@@ -240,4 +430,17 @@ void main() {
       expect(uri.queryParameters['speakerLabels'], 'Ada,Ben');
     });
   });
+}
+
+class _FakeCompromiseSoundPlayer implements CompromiseSoundPlayer {
+  int playCount = 0;
+
+  @override
+  Future<void> playCompromiseFound() {
+    playCount++;
+    return Future.value();
+  }
+
+  @override
+  Future<void> dispose() => Future.value();
 }

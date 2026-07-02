@@ -150,7 +150,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             ),
           ),
           IconButton(
-            onPressed: _editProfile,
+            onPressed: RefHaptics.wrap(_editProfile),
             icon: const Icon(Icons.tune_rounded),
             color: RefPalette.ink.withValues(alpha: 0.55),
             iconSize: 20,
@@ -426,7 +426,7 @@ class _QuickName extends StatelessWidget {
       color: RefPalette.ink.withValues(alpha: 0.07),
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        onTap: onTap,
+        onTap: RefHaptics.wrap(onTap, haptic: RefHaptic.selection),
         borderRadius: BorderRadius.circular(20),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),

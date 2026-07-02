@@ -19,7 +19,9 @@ import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
 import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
+import { RoomToneAnalyzer } from '../roomTone/roomToneAnalyzer.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
+import { InterruptionDetector } from '../interruptions/interruptionDetector.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
   encoding: 'unknown',
@@ -128,6 +130,13 @@ async function handleAudioConnection(
     config,
     emit: (event) => sendEvent(webSocket, event),
   });
+  const roomToneAnalyzer = new RoomToneAnalyzer({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: (event) => sendEvent(webSocket, event),
+  });
+  const interruptionDetector = new InterruptionDetector();
   const debriefer = new ConversationDebriefer({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -151,6 +160,12 @@ async function handleAudioConnection(
       sendEvent(webSocket, labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
+        const interruption = interruptionDetector.recordTranscript(labelled.event);
+        if (interruption) {
+          sendEvent(webSocket, interruption);
+        }
+
+        roomToneAnalyzer.recordTranscript(labelled.event);
         compromiseAdvisor.recordTranscript(labelled.event);
         debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
@@ -177,6 +192,7 @@ async function handleAudioConnection(
     acceptedBinaryAudio: true,
   });
   compromiseAdvisor.start();
+  roomToneAnalyzer.start();
 
   const transcriber = createDeepgramTranscriber(
     config,
@@ -194,6 +210,7 @@ async function handleAudioConnection(
       recorder,
       transcriber,
       compromiseAdvisor,
+      roomToneAnalyzer,
       debriefer,
       sendEnded,
     });
@@ -290,10 +307,12 @@ async function endSession(options: {
   recorder: AudioStreamRecorder;
   transcriber: Transcriber;
   compromiseAdvisor: CompromiseAdvisor;
+  roomToneAnalyzer: RoomToneAnalyzer;
   debriefer: ConversationDebriefer;
   sendEnded: boolean;
 }): Promise<void> {
   options.compromiseAdvisor.close();
+  options.roomToneAnalyzer.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();
   const debrief = await options.debriefer.finish(snapshot);

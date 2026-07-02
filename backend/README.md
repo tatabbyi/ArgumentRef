@@ -93,8 +93,8 @@ And transcript events:
 }
 ```
 
-If Gemini is enabled, the backend watches the final transcript after one
-minute, then every 30 seconds, and emits ranked compromise ideas:
+If Gemini is enabled, the backend watches the final transcript after 30 seconds,
+then every 30 seconds, and emits ranked compromise ideas:
 
 ```json
 {
@@ -117,6 +117,31 @@ minute, then every 30 seconds, and emits ranked compromise ideas:
       "pushLevel": "urgent"
     }
   ]
+}
+```
+
+It also analyzes each final sentence with `ROOM_TONE_GEMINI_MODEL`
+(`gemini-3.1-flash-lite` by default) and emits fast room-tone readings:
+
+```json
+{
+  "type": "room_tone.analyzed",
+  "provider": "gemini",
+  "model": "gemini-3.1-flash-lite",
+  "sessionId": "demo-session",
+  "streamId": "...",
+  "generatedAt": "2026-07-02T12:00:02.000Z",
+  "lineNumber": 4,
+  "sentenceIndex": 1,
+  "speaker": "speaker_0",
+  "text": "You never listen.",
+  "dominantTone": "angry",
+  "trend": "escalating",
+  "intensity": 86,
+  "confidence": 0.91,
+  "summary": "Sharp accusation",
+  "signals": ["angry", "accusatory"],
+  "phrases": [{ "text": "never listen", "signal": "accusatory" }]
 }
 ```
 
@@ -181,7 +206,7 @@ GOOGLE_FACT_CHECK_PAGE_SIZE=3
 FACT_CHECK_MAX_CLAIMS_PER_SESSION=5
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
-COMPROMISE_INITIAL_DELAY_MS=60000
+COMPROMISE_INITIAL_DELAY_MS=30000
 COMPROMISE_INTERVAL_MS=30000
 ```
 

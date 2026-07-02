@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -82,6 +83,11 @@ class AudioSession {
 
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
+
+  final ValueNotifier<double> loudnessListenable = ValueNotifier<double>(0);
+
+  /// Smoothed microphone loudness, normalized to 0 (quiet) through 1 (loud).
+  double get loudnessLevel => loudnessListenable.value;
 
   /// Requests mic permission, opens the socket, and starts streaming. Safe to
   /// await; on failure it lands in [AudioSessionStatus.permissionDenied] or
@@ -172,6 +178,7 @@ class AudioSession {
     // Push any trailing audio, then politely end the session, before we close.
     _flush();
     _sendControl(const {'type': 'session.stop'});
+    loudnessListenable.value = 0;
 
     await _teardown();
     if (status != AudioSessionStatus.error &&
@@ -187,6 +194,7 @@ class AudioSession {
       await _recorder?.dispose();
     } catch (_) {}
     if (!_events.isClosed) await _events.close();
+    loudnessListenable.dispose();
     statusListenable.dispose();
   }
 
@@ -194,9 +202,32 @@ class AudioSession {
 
   void _onMicData(Uint8List data) {
     if (_closed) return;
+    _updateLoudness(data);
     _pending.add(data);
     if (_pending.length >= _flushThresholdBytes) {
       _flush();
+    }
+  }
+
+  void _updateLoudness(Uint8List data) {
+    final sampleCount = data.lengthInBytes ~/ 2;
+    if (sampleCount == 0) return;
+
+    final bytes = ByteData.sublistView(data);
+    var sumSquares = 0.0;
+    for (var i = 0; i < sampleCount; i++) {
+      final sample = bytes.getInt16(i * 2, Endian.little) / 32768.0;
+      sumSquares += sample * sample;
+    }
+
+    final rms = math.sqrt(sumSquares / sampleCount);
+    final instant = (rms * 8.0).clamp(0.0, 1.0);
+    final current = loudnessLevel;
+    final smoothing = instant > current ? 0.45 : 0.16;
+    final next = current + (instant - current) * smoothing;
+
+    if ((next - current).abs() > 0.01) {
+      loudnessListenable.value = next;
     }
   }
 

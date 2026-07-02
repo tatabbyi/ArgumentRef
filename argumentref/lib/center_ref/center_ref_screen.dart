@@ -3,8 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
-import '../audio/ref_events.dart';
+import '../audio/compromise_sound_player.dart';
 import '../audio/live_ref_controller.dart';
+import '../audio/ref_events.dart';
 import '../ui/ref_theme.dart';
 import 'beats.dart';
 import 'referee.dart';
@@ -21,7 +22,7 @@ import 'volume_wave.dart';
 /// In **live mode** ([live] = true) the same face is driven by a
 /// [LiveRefController]: real microphone audio is streamed to the backend and the
 /// referee reacts to the transcripts that come back — who holds the floor, the
-/// flow balance, interruptions — with the live transcript shown beneath him.
+/// flow balance, interruptions, and likely compromises.
 /// Either way the continuous breathing/sway/blink/saccade signals keep him
 /// alive.
 class CenterRefScreen extends StatefulWidget {
@@ -114,6 +115,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
           LiveRefController(
             leftName: widget.leftName,
             rightName: widget.rightName,
+            compromiseSoundPlayer: RefereeWhistlePlayer(),
           );
       _live = controller;
       controller.addListener(_onLive);
@@ -194,7 +196,6 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             _guidance(),
             Expanded(child: _stage()),
             if (_live != null) _compromisePanel(_live!),
-            if (_live != null) _transcriptPanel(_live!),
             _stats(),
             _endButton(),
             const SizedBox(height: 8),
@@ -213,6 +214,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
       child: RefPrimaryButton(
         label: 'End session',
         color: RefPalette.red,
+        haptic: RefHaptic.heavy,
         onPressed: widget.onEnd ?? _handleEnd,
       ),
     );
@@ -300,11 +302,17 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   Widget _compromisePanel(LiveRefController live) {
     final suggestions = live.compromises;
     final status = live.compromiseStatusLabel;
+    final hasSuggestions = suggestions.isNotEmpty;
 
-    return Container(
-      height: 122,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      height: hasSuggestions ? 218 : 62,
       margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      padding:
+          hasSuggestions
+              ? const EdgeInsets.fromLTRB(12, 10, 12, 12)
+              : const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: RefPalette.cream,
         borderRadius: BorderRadius.circular(14),
@@ -318,7 +326,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
         ],
       ),
       child:
-          suggestions.isEmpty
+          !hasSuggestions
               ? Center(
                 child: Text(
                   status ?? 'Listening for a fair deal.',
@@ -474,79 +482,6 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     };
   }
 
-  // ── Live transcript ─────────────────────────────────────────────────────
-  /// The rolling transcript beneath the ref: finalised lines plus the in-flight
-  /// (interim) line, newest at the bottom.
-  Widget _transcriptPanel(LiveRefController live) {
-    final lines = live.transcript;
-    final rows = <Widget>[
-      if (live.hasPartial)
-        _transcriptRow(live.partialSpeaker, live.partialText, faded: true),
-      for (final line in lines.reversed)
-        _transcriptRow(line.speaker, line.text, faded: false),
-    ];
-
-    return Container(
-      height: 92,
-      margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: RefPalette.ink.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child:
-          rows.isEmpty
-              ? Center(
-                child: Text(
-                  'What everyone says will show up here.',
-                  style: mulish(
-                    size: 12.5,
-                    color: RefPalette.ink.withValues(alpha: 0.4),
-                  ),
-                ),
-              )
-              : ListView(
-                reverse: true,
-                padding: EdgeInsets.zero,
-                children: rows,
-              ),
-    );
-  }
-
-  Widget _transcriptRow(Speaker speaker, String text, {required bool faded}) {
-    final color = switch (speaker) {
-      Speaker.left => RefPalette.green,
-      Speaker.right => RefPalette.orange,
-      Speaker.none => RefPalette.olive,
-    };
-    final name = switch (speaker) {
-      Speaker.left => widget.leftName,
-      Speaker.right => widget.rightName,
-      Speaker.none => 'Someone',
-    };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: '$name  ',
-              style: mulish(size: 12.5, weight: FontWeight.w800, color: color),
-            ),
-            TextSpan(
-              text: text,
-              style: mulish(
-                size: 12.5,
-                weight: FontWeight.w500,
-                color: RefPalette.ink.withValues(alpha: faded ? 0.45 : 0.82),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   // ── Stage ──────────────────────────────────────────────────────────────
   Widget _stage() {
     return DecoratedBox(
@@ -616,24 +551,32 @@ class _CenterRefScreenState extends State<CenterRefScreen>
 
   /// The wave tints toward whoever holds the floor, flushing red when the ref
   /// flags a cut-in or goes on alert.
-  Color get _waveColor => switch (_beat.mood) {
-    Mood.alert || Mood.concern => RefPalette.red,
-    _ => switch (_beat.active) {
-      Speaker.left => RefPalette.green,
-      Speaker.right => RefPalette.orange,
-      Speaker.none => RefPalette.olive,
-    },
-  };
+  Color get _waveColor {
+    final tone = _live?.roomTone;
+    if (tone != null && tone.isHeated) return RefPalette.red;
+    if (tone != null && tone.isRepairing) return RefPalette.green;
+
+    return switch (_beat.mood) {
+      Mood.alert || Mood.concern => RefPalette.red,
+      _ => switch (_beat.active) {
+        Speaker.left => RefPalette.green,
+        Speaker.right => RefPalette.orange,
+        Speaker.none => RefPalette.olive,
+      },
+    };
+  }
 
   /// How energetic the room reads — quietest when no one holds the floor,
   /// loudest on a cut-in.
-  double get _roomLevel => switch (_beat.mood) {
-    Mood.alert => 1.0,
-    Mood.concern => 0.85,
-    Mood.approve => 0.7,
-    Mood.curious => 0.6,
-    Mood.listen => _beat.active == Speaker.none ? 0.28 : 0.6,
-  };
+  double get _roomLevel =>
+      _live?.roomTone.waveLevel ??
+      switch (_beat.mood) {
+        Mood.alert => 1.0,
+        Mood.concern => 0.85,
+        Mood.approve => 0.7,
+        Mood.curious => 0.6,
+        Mood.listen => _beat.active == Speaker.none ? 0.28 : 0.6,
+      };
 
   // ── Guidance ───────────────────────────────────────────────────────────
   /// The ref's live coaching cue — what the room should do next — sitting
@@ -716,6 +659,82 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   }
 
   Widget _cutInsTile() {
+    final stats = _live?.interruptions;
+    if (stats == null) {
+      return _simpleCutInsTile(_cut);
+    }
+
+    final latest = stats.latest;
+    final latestLabel =
+        latest == null
+            ? 'No clear direction yet'
+            : '${_speakerName(latest.interrupter)} cut ${_speakerName(latest.interrupted)}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+      decoration: BoxDecoration(
+        color: RefPalette.red.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'CUT-INS',
+            style: mulish(
+              size: 10,
+              weight: FontWeight.w700,
+              letterSpacing: 10 * 0.12,
+              color: RefPalette.red,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${stats.total}',
+                style: zilla(
+                  size: 22,
+                  weight: FontWeight.w700,
+                  color: RefPalette.red,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  latestLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: mulish(
+                    size: 10,
+                    weight: FontWeight.w800,
+                    color: RefPalette.ink.withValues(alpha: 0.52),
+                    height: 1.05,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          _cutInDirection(
+            '${widget.leftName} cut ${widget.rightName}',
+            stats.leftCutRight,
+            RefPalette.green,
+          ),
+          const SizedBox(height: 3),
+          _cutInDirection(
+            '${widget.rightName} cut ${widget.leftName}',
+            stats.rightCutLeft,
+            RefPalette.orange,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _simpleCutInsTile(int total) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
@@ -736,7 +755,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
           ),
           const SizedBox(height: 2),
           Text(
-            '$_cut',
+            '$total',
             style: zilla(
               size: 22,
               weight: FontWeight.w700,
@@ -749,11 +768,67 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     );
   }
 
+  Widget _cutInDirection(String label, int count, Color color) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: mulish(
+              size: 10.2,
+              weight: FontWeight.w700,
+              color: RefPalette.ink.withValues(alpha: 0.58),
+              height: 1.05,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '$count',
+          style: zilla(
+            size: 14,
+            weight: FontWeight.w700,
+            color: color,
+            height: 1,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _speakerName(Speaker speaker) {
+    return switch (speaker) {
+      Speaker.left => widget.leftName,
+      Speaker.right => widget.rightName,
+      Speaker.none => 'Someone',
+    };
+  }
+
   Widget _roomToneTile() {
+    final tone =
+        _live?.roomTone ??
+        const RoomToneStatus(
+          label: 'Warming',
+          detail: 'Demo room energy',
+          score: 42,
+          loudness: 0.4,
+          isHeated: false,
+          isRepairing: false,
+          hasAiSignal: false,
+        );
+    final color =
+        tone.isHeated
+            ? RefPalette.red
+            : tone.isRepairing
+            ? RefPalette.green
+            : RefPalette.olive;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
-        color: RefPalette.green.withValues(alpha: 0.16),
+        color: color.withValues(alpha: tone.isHeated ? 0.12 : 0.16),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
@@ -765,17 +840,44 @@ class _CenterRefScreenState extends State<CenterRefScreen>
               size: 10,
               weight: FontWeight.w700,
               letterSpacing: 10 * 0.12,
-              color: RefPalette.olive,
+              color: color,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 5),
           Text(
-            'Warming',
+            tone.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: zilla(
               size: 16,
               weight: FontWeight.w600,
-              color: RefPalette.olive,
+              color: color,
               height: 1,
+            ),
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              height: 5,
+              color: RefPalette.ink.withValues(alpha: 0.08),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: (tone.score / 100).clamp(0.0, 1.0).toDouble(),
+                child: ColoredBox(color: color),
+              ),
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            tone.detail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: mulish(
+              size: 10.5,
+              weight: FontWeight.w700,
+              color: RefPalette.ink.withValues(alpha: 0.52),
+              height: 1.05,
             ),
           ),
         ],

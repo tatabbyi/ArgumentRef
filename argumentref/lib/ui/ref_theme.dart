@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../center_ref/palette.dart';
+import 'ref_haptics.dart';
 
 export '../center_ref/palette.dart';
+export 'ref_haptics.dart';
 
 /// A speech bubble the referee "says" — the warm orange→terracotta gradient
 /// lifted from the 1a "drifting nudge", with an upward pointer so it reads as
@@ -151,6 +153,7 @@ class RefPrimaryButton extends StatelessWidget {
     this.borderRadius = 16,
     this.fontSize = 16,
     this.verticalPadding = 15,
+    this.haptic = RefHaptic.medium,
   });
 
   final String label;
@@ -170,6 +173,9 @@ class RefPrimaryButton extends StatelessWidget {
   /// Vertical padding, i.e. the pill's height above/below the label.
   final double verticalPadding;
 
+  /// Feedback played for enabled taps.
+  final RefHaptic haptic;
+
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
@@ -177,7 +183,7 @@ class RefPrimaryButton extends StatelessWidget {
       color: enabled ? color : color.withValues(alpha: 0.22),
       borderRadius: BorderRadius.circular(borderRadius),
       child: InkWell(
-        onTap: onPressed,
+        onTap: RefHaptics.wrap(onPressed, haptic: haptic),
         borderRadius: BorderRadius.circular(borderRadius),
         child: Container(
           width: expand ? double.infinity : null,
@@ -208,7 +214,7 @@ class RefTextAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: onPressed,
+      onTap: RefHaptics.wrap(onPressed),
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -249,7 +255,7 @@ class RefChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: RefHaptics.wrap(onTap, haptic: RefHaptic.selection),
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),

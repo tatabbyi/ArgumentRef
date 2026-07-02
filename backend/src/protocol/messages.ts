@@ -57,6 +57,26 @@ export type TranscriptFinalEvent = BaseTranscriptEvent & {
   type: 'transcript.final';
 };
 
+export interface InterruptionDetectedEvent {
+  type: 'interruption.detected';
+  provider: 'argumentref';
+  sessionId: string;
+  streamId: string;
+  interrupter: string;
+  interrupterLabel?: string;
+  interrupted: string;
+  interruptedLabel?: string;
+  interrupterText: string;
+  interruptedText: string;
+  startMs?: number;
+  endMs?: number;
+  overlapMs: number;
+  gapMs: number;
+  confidence: number;
+  reason: 'speaker_overlap' | 'tight_takeover';
+  sourceEvent: 'transcript.final';
+}
+
 export interface ClaimDetectedEvent {
   type: 'claim.detected';
   claimId: string;
@@ -110,6 +130,69 @@ export interface CompromiseDisabledEvent {
 
 export interface CompromiseErrorEvent {
   type: 'compromise.error';
+  provider: 'gemini';
+  message: string;
+}
+
+export const roomToneSignals = [
+  'aggressive',
+  'angry',
+  'accusatory',
+  'dismissive',
+  'defensive',
+  'contemptuous',
+  'interruptive',
+  'hurt',
+  'sad',
+  'anxious',
+  'calm',
+  'forgiving',
+  'apologetic',
+  'validating',
+  'compromising',
+  'problem_solving',
+  'repair_attempt',
+  'neutral',
+] as const;
+
+export type RoomToneSignal = (typeof roomToneSignals)[number];
+
+export type RoomToneTrend = 'escalating' | 'de_escalating' | 'neutral';
+
+export interface RoomTonePhrase {
+  text: string;
+  signal: RoomToneSignal;
+}
+
+export interface RoomToneAnalyzedEvent {
+  type: 'room_tone.analyzed';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  generatedAt: string;
+  lineNumber: number;
+  sentenceIndex: number;
+  speaker: string;
+  speakerLabel?: string;
+  text: string;
+  dominantTone: RoomToneSignal;
+  trend: RoomToneTrend;
+  intensity: number;
+  confidence: number;
+  summary: string;
+  signals: RoomToneSignal[];
+  phrases: RoomTonePhrase[];
+}
+
+export interface RoomToneDisabledEvent {
+  type: 'room_tone.disabled';
+  provider: 'gemini';
+  reason: 'missing_gemini_api_key';
+}
+
+export interface RoomToneErrorEvent {
+  type: 'room_tone.error';
   provider: 'gemini';
   message: string;
 }
@@ -261,10 +344,14 @@ export type ServerEvent =
     }
   | TranscriptPartialEvent
   | TranscriptFinalEvent
+  | InterruptionDetectedEvent
   | ClaimDetectedEvent
   | CompromiseSuggestedEvent
   | CompromiseDisabledEvent
   | CompromiseErrorEvent
+  | RoomToneAnalyzedEvent
+  | RoomToneDisabledEvent
+  | RoomToneErrorEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent

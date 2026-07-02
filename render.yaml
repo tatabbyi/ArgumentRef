@@ -34,7 +34,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.5-flash
+      - key: ROOM_TONE_GEMINI_MODEL
+        value: gemini-3.1-flash-lite
       - key: COMPROMISE_INITIAL_DELAY_MS
-        value: 60000
+        value: 30000
       - key: COMPROMISE_INTERVAL_MS
         value: 30000
