@@ -119,7 +119,36 @@ transcript.final
 Top-tier suggestions carry `quality: "really_good"` and `pushLevel: "urgent"`
 so the frontend can make the referee push them harder.
 
-## Phase 6: Session Storage
+## Phase 6: Logical Fallacy Detection
+
+Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
+rolling final transcript window and emits conservative fallacy hints.
+
+```text
+transcript.final
+  -> rolling transcript
+  -> Gemini Interactions API
+  -> fallacy.detected event
+```
+
+Example event:
+
+```json
+{
+  "type": "fallacy.detected",
+  "speaker": "speaker_0",
+  "speakerLabel": "PersonA",
+  "fallacy": "straw_man",
+  "confidence": "medium",
+  "severity": "moderate",
+  "quote": "So you are saying I should never have any free time.",
+  "suggestedRefereeResponse": "Pause there and restate the other person's actual point before responding."
+}
+```
+
+Only medium/high confidence detections are emitted by default.
+
+## Phase 7: Session Storage
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on
@@ -132,6 +161,7 @@ Stored history:
 - final transcript lines
 - detected claims
 - fact-check lifecycle events and results
+- fallacy detections
 - compromise suggestions
 - raw event JSON for future features
 

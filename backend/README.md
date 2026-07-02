@@ -185,6 +185,9 @@ GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
 COMPROMISE_INITIAL_DELAY_MS=60000
 COMPROMISE_INTERVAL_MS=30000
+FALLACY_DETECTION_ENABLED=true
+FALLACY_ANALYSIS_INTERVAL_MS=20000
+FALLACY_MIN_CONFIDENCE=medium
 ```
 
 ## Deploy to Render
@@ -243,7 +246,7 @@ GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
 Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
-Add `GEMINI_API_KEY` there too to activate compromise suggestions. Do not put it in the Flutter app.
+Add `GEMINI_API_KEY` there too to activate compromise suggestions, conversation debriefs, and logical fallacy detection. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
 
@@ -257,6 +260,7 @@ When `DATABASE_URL` is configured, the backend creates these tables automaticall
 - `transcript_lines`
 - `detected_claims`
 - `fact_checks`
+- `fallacy_detections`
 - `compromise_suggestions`
 - `speaker_mappings`
 
@@ -353,6 +357,7 @@ Expected output:
 {"type":"claim.detected", "speaker":"speaker_0", "text":"...", "reason":"contains_number"}
 {"type":"fact_check.started", "claimId":"...", "provider":"google-fact-check"}
 {"type":"fact_check.completed", "claimId":"...", "status":"matched_fact_check", "sources":[...]}
+{"type":"fallacy.detected", "speaker":"speaker_0", "fallacy":"straw_man", "confidence":"medium", "quote":"..."}
 ```
 
 For speaker diarization, use audio with two clearly different speakers who take turns speaking. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
@@ -417,6 +422,31 @@ Or:
 
 This free integration searches existing published fact checks. It should not claim that an unmatched statement is true or false.
 
+## Test Logical Fallacy Events
+
+Fallacy detection reuses `GEMINI_API_KEY`. No extra secret is required.
+
+The backend watches final transcript lines and periodically emits conservative
+fallacy events:
+
+```json
+{
+  "type": "fallacy.detected",
+  "provider": "gemini",
+  "speaker": "speaker_0",
+  "speakerLabel": "PersonA",
+  "fallacy": "straw_man",
+  "confidence": "medium",
+  "severity": "moderate",
+  "quote": "So you are saying I should never have any free time.",
+  "explanation": "This may exaggerate the other person's position rather than responding to the actual request.",
+  "suggestedRefereeResponse": "Pause there and restate the other person's actual point before responding."
+}
+```
+
+Only `medium` and `high` confidence detections are emitted by default. This is a
+referee hint, not a final judgment.
+
 ## Next Step
 
-The backend now detects checkable claims from `transcript.final` events and sends them to Google Fact Check Tools when configured. The frontend should consume normalized transcript, claim, and fact-check events from the backend, not talk to Deepgram or Google directly.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, and emits conservative fallacy hints. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, and history data from the backend.

@@ -8,6 +8,7 @@ import type {
   FactCheckFailedEvent,
   FactCheckSkippedEvent,
   FactCheckStartedEvent,
+  FallacyDetectedEvent,
   ServerEvent,
   SpeakerMappedEvent,
   TranscriptFinalEvent,
@@ -22,6 +23,7 @@ type HistoryEvent =
   | FactCheckCompletedEvent
   | FactCheckSkippedEvent
   | FactCheckFailedEvent
+  | FallacyDetectedEvent
   | CompromiseSuggestedEvent
   | SpeakerMappedEvent;
 
@@ -43,6 +45,7 @@ export interface HistorySessionSummary {
   transcriptLineCount: number;
   claimCount: number;
   factCheckCount: number;
+  fallacyCount: number;
   compromiseCount: number;
   debriefStatus?: string;
 }
@@ -53,6 +56,7 @@ export interface HistorySessionDetail extends HistorySessionSummary {
   transcriptLines: HistoryTranscriptLine[];
   claims: HistoryClaim[];
   factChecks: HistoryFactCheck[];
+  fallacies: HistoryFallacyDetection[];
   compromises: HistoryCompromiseSuggestion[];
   events: HistoryRawEvent[];
 }
@@ -115,6 +119,23 @@ export interface HistoryFactCheck {
   reason?: string;
   message?: string;
   sources: unknown;
+  createdAt: string;
+}
+
+export interface HistoryFallacyDetection {
+  id: number;
+  streamId: string;
+  model: string;
+  speaker: string;
+  speakerLabel?: string;
+  fallacy: string;
+  confidence: string;
+  severity: string;
+  quote: string;
+  explanation: string;
+  suggestedRefereeResponse: string;
+  transcriptLineCount: number;
+  detectedAt: string;
   createdAt: string;
 }
 
@@ -200,6 +221,7 @@ class PostgresHistoryStore implements HistoryStore {
           COUNT(DISTINCT tl.id)::int AS transcript_line_count,
           COUNT(DISTINCT dc.claim_id)::int AS claim_count,
           COUNT(DISTINCT fc.id)::int AS fact_check_count,
+          COUNT(DISTINCT fd.id)::int AS fallacy_count,
           COUNT(DISTINCT cs.id)::int AS compromise_count,
           MAX(st.debrief_status) AS debrief_status
         FROM history_sessions s
@@ -207,6 +229,7 @@ class PostgresHistoryStore implements HistoryStore {
         LEFT JOIN transcript_lines tl ON tl.session_id = s.session_id
         LEFT JOIN detected_claims dc ON dc.session_id = s.session_id
         LEFT JOIN fact_checks fc ON fc.session_id = s.session_id
+        LEFT JOIN fallacy_detections fd ON fd.session_id = s.session_id
         LEFT JOIN compromise_suggestions cs ON cs.session_id = s.session_id
         GROUP BY s.session_id, s.created_at, s.updated_at
         ORDER BY s.updated_at DESC
@@ -232,6 +255,7 @@ class PostgresHistoryStore implements HistoryStore {
           COUNT(DISTINCT tl.id)::int AS transcript_line_count,
           COUNT(DISTINCT dc.claim_id)::int AS claim_count,
           COUNT(DISTINCT fc.id)::int AS fact_check_count,
+          COUNT(DISTINCT fd.id)::int AS fallacy_count,
           COUNT(DISTINCT cs.id)::int AS compromise_count,
           MAX(st.debrief_status) AS debrief_status
         FROM history_sessions s
@@ -239,6 +263,7 @@ class PostgresHistoryStore implements HistoryStore {
         LEFT JOIN transcript_lines tl ON tl.session_id = s.session_id
         LEFT JOIN detected_claims dc ON dc.session_id = s.session_id
         LEFT JOIN fact_checks fc ON fc.session_id = s.session_id
+        LEFT JOIN fallacy_detections fd ON fd.session_id = s.session_id
         LEFT JOIN compromise_suggestions cs ON cs.session_id = s.session_id
         WHERE s.session_id = $1
         GROUP BY s.session_id, s.created_at, s.updated_at
@@ -257,6 +282,7 @@ class PostgresHistoryStore implements HistoryStore {
       transcriptLines,
       claims,
       factChecks,
+      fallacies,
       compromises,
       events,
     ] = await Promise.all([
@@ -305,6 +331,15 @@ class PostgresHistoryStore implements HistoryStore {
         `,
         [sessionId],
       ),
+      this.pool.query<FallacyRow>(
+        `
+          SELECT *
+          FROM fallacy_detections
+          WHERE session_id = $1
+          ORDER BY created_at ASC, id ASC
+        `,
+        [sessionId],
+      ),
       this.pool.query<CompromiseRow>(
         `
           SELECT *
@@ -333,6 +368,7 @@ class PostgresHistoryStore implements HistoryStore {
       transcriptLines: transcriptLines.rows.map(toTranscriptLine),
       claims: claims.rows.map(toClaim),
       factChecks: factChecks.rows.map(toFactCheck),
+      fallacies: fallacies.rows.map(toFallacy),
       compromises: compromises.rows.map(toCompromise),
       events: events.rows.map(toRawEvent),
     };
@@ -431,6 +467,28 @@ class PostgresHistoryStore implements HistoryStore {
       CREATE INDEX IF NOT EXISTS fact_checks_claim_created_idx
         ON fact_checks(claim_id, created_at ASC);
 
+      CREATE TABLE IF NOT EXISTS fallacy_detections (
+        id BIGSERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        stream_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        speaker TEXT NOT NULL,
+        speaker_label TEXT,
+        fallacy TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        quote TEXT NOT NULL,
+        explanation TEXT NOT NULL,
+        suggested_referee_response TEXT NOT NULL,
+        transcript_line_count INTEGER NOT NULL,
+        detected_at TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS fallacy_detections_session_created_idx
+        ON fallacy_detections(session_id, created_at ASC);
+
       CREATE TABLE IF NOT EXISTS compromise_suggestions (
         id BIGSERIAL PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -482,6 +540,9 @@ class PostgresHistoryStore implements HistoryStore {
       case 'fact_check.skipped':
       case 'fact_check.failed':
         await this.persistFactCheckEvent(event);
+        return;
+      case 'fallacy.detected':
+        await this.persistFallacyDetected(event);
         return;
       case 'compromise.suggested':
         await this.persistCompromiseSuggested(event);
@@ -702,6 +763,46 @@ class PostgresHistoryStore implements HistoryStore {
     );
   }
 
+  private async persistFallacyDetected(event: FallacyDetectedEvent): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO fallacy_detections (
+          session_id,
+          stream_id,
+          model,
+          speaker,
+          speaker_label,
+          fallacy,
+          confidence,
+          severity,
+          quote,
+          explanation,
+          suggested_referee_response,
+          transcript_line_count,
+          detected_at,
+          payload
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+      `,
+      [
+        event.sessionId,
+        event.streamId,
+        event.model,
+        event.speaker,
+        event.speakerLabel,
+        event.fallacy,
+        event.confidence,
+        event.severity,
+        event.quote,
+        event.explanation,
+        event.suggestedRefereeResponse,
+        event.transcriptLineCount,
+        event.detectedAt,
+        JSON.stringify(event),
+      ],
+    );
+  }
+
   private async persistCompromiseSuggested(
     event: CompromiseSuggestedEvent,
   ): Promise<void> {
@@ -767,6 +868,7 @@ function shouldPersist(event: ServerEvent): event is HistoryEvent {
     event.type === 'fact_check.completed' ||
     event.type === 'fact_check.skipped' ||
     event.type === 'fact_check.failed' ||
+    event.type === 'fallacy.detected' ||
     event.type === 'compromise.suggested' ||
     event.type === 'speaker.mapped'
   );
@@ -790,6 +892,7 @@ interface SessionSummaryRow extends QueryResultRow {
   transcript_line_count: number;
   claim_count: number;
   fact_check_count: number;
+  fallacy_count: number;
   compromise_count: number;
   debrief_status: string | null;
 }
@@ -855,6 +958,23 @@ interface FactCheckRow extends QueryResultRow {
   created_at: Date;
 }
 
+interface FallacyRow extends QueryResultRow {
+  id: string | number;
+  stream_id: string;
+  model: string;
+  speaker: string;
+  speaker_label: string | null;
+  fallacy: string;
+  confidence: string;
+  severity: string;
+  quote: string;
+  explanation: string;
+  suggested_referee_response: string;
+  transcript_line_count: number;
+  detected_at: Date | string;
+  created_at: Date;
+}
+
 interface CompromiseRow extends QueryResultRow {
   id: string | number;
   stream_id: string;
@@ -884,6 +1004,7 @@ function toSessionSummary(row: SessionSummaryRow): HistorySessionSummary {
     transcriptLineCount: Number(row.transcript_line_count),
     claimCount: Number(row.claim_count),
     factCheckCount: Number(row.fact_check_count),
+    fallacyCount: Number(row.fallacy_count),
     compromiseCount: Number(row.compromise_count),
     debriefStatus: row.debrief_status ?? undefined,
   };
@@ -956,6 +1077,25 @@ function toFactCheck(row: FactCheckRow): HistoryFactCheck {
     reason: row.reason ?? undefined,
     message: row.message ?? undefined,
     sources: row.sources,
+    createdAt: toIso(row.created_at),
+  };
+}
+
+function toFallacy(row: FallacyRow): HistoryFallacyDetection {
+  return {
+    id: Number(row.id),
+    streamId: row.stream_id,
+    model: row.model,
+    speaker: row.speaker,
+    speakerLabel: row.speaker_label ?? undefined,
+    fallacy: row.fallacy,
+    confidence: row.confidence,
+    severity: row.severity,
+    quote: row.quote,
+    explanation: row.explanation,
+    suggestedRefereeResponse: row.suggested_referee_response,
+    transcriptLineCount: Number(row.transcript_line_count),
+    detectedAt: toIso(row.detected_at),
     createdAt: toIso(row.created_at),
   };
 }

@@ -102,6 +102,9 @@ function printEvent(event: ServerEvent): void {
     case 'compromise.suggested':
     case 'compromise.disabled':
     case 'compromise.error':
+    case 'fallacy.detected':
+    case 'fallacy.disabled':
+    case 'fallacy.error':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;

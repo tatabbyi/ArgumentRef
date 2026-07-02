@@ -40,3 +40,9 @@ services:
         value: 60000
       - key: COMPROMISE_INTERVAL_MS
         value: 30000
+      - key: FALLACY_DETECTION_ENABLED
+        value: true
+      - key: FALLACY_ANALYSIS_INTERVAL_MS
+        value: 20000
+      - key: FALLACY_MIN_CONFIDENCE
+        value: medium

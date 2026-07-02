@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { FallacyConfidence } from './protocol/messages.js';
 
 export interface AppConfig {
   host: string;
@@ -20,6 +21,9 @@ export interface AppConfig {
   geminiModel: string;
   compromiseInitialDelayMs: number;
   compromiseIntervalMs: number;
+  fallacyDetectionEnabled: boolean;
+  fallacyAnalysisIntervalMs: number;
+  fallacyMinConfidence: FallacyConfidence;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -52,6 +56,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     geminiModel: env.GEMINI_MODEL ?? 'gemini-3.5-flash',
     compromiseInitialDelayMs: readNumber(env.COMPROMISE_INITIAL_DELAY_MS, 60_000),
     compromiseIntervalMs: readNumber(env.COMPROMISE_INTERVAL_MS, 30_000),
+    fallacyDetectionEnabled: readBoolean(env.FALLACY_DETECTION_ENABLED, true),
+    fallacyAnalysisIntervalMs: readNumber(env.FALLACY_ANALYSIS_INTERVAL_MS, 20_000),
+    fallacyMinConfidence: readFallacyConfidence(
+      env.FALLACY_MIN_CONFIDENCE,
+      'medium',
+    ),
   };
 }
 
@@ -83,4 +93,15 @@ function databaseUrlRequestsSsl(value: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+function readFallacyConfidence(
+  value: string | undefined,
+  fallback: FallacyConfidence,
+): FallacyConfidence {
+  if (value === 'low' || value === 'medium' || value === 'high') {
+    return value;
+  }
+
+  return fallback;
 }

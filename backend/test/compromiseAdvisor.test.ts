@@ -160,6 +160,9 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     geminiModel: 'gemini-3.5-flash',
     compromiseInitialDelayMs: 60_000,
     compromiseIntervalMs: 30_000,
+    fallacyDetectionEnabled: false,
+    fallacyAnalysisIntervalMs: 20_000,
+    fallacyMinConfidence: 'medium',
     ...overrides,
   };
 }

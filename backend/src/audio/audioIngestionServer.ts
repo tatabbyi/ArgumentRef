@@ -19,6 +19,7 @@ import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
 import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
+import { FallacyDetector } from '../fallacies/fallacyDetector.js';
 import {
   createHistoryStore,
   type HistoryStore,
@@ -223,6 +224,12 @@ async function handleAudioConnection(
     sendEvent(webSocket, event);
     recordHistoryEvent(historyStore, event);
   };
+  const fallacyDetector = new FallacyDetector({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: emitClientEvent,
+  });
   const compromiseAdvisor = new CompromiseAdvisor({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -252,6 +259,7 @@ async function handleAudioConnection(
       emitClientEvent(labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
+        fallacyDetector.recordTranscript(labelled.event);
         compromiseAdvisor.recordTranscript(labelled.event);
         debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
@@ -276,6 +284,7 @@ async function handleAudioConnection(
     acceptedBinaryAudio: true,
   });
   compromiseAdvisor.start();
+  fallacyDetector.start();
 
   const transcriber = createDeepgramTranscriber(
     config,
@@ -292,6 +301,7 @@ async function handleAudioConnection(
       webSocket,
       recorder,
       transcriber,
+      fallacyDetector,
       compromiseAdvisor,
       debriefer,
       historyStore,
@@ -389,11 +399,13 @@ async function endSession(options: {
   webSocket: WebSocket;
   recorder: AudioStreamRecorder;
   transcriber: Transcriber;
+  fallacyDetector: FallacyDetector;
   compromiseAdvisor: CompromiseAdvisor;
   debriefer: ConversationDebriefer;
   historyStore: HistoryStore;
   sendEnded: boolean;
 }): Promise<void> {
+  options.fallacyDetector.close();
   options.compromiseAdvisor.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();

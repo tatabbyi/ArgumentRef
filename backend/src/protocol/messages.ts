@@ -114,6 +114,53 @@ export interface CompromiseErrorEvent {
   message: string;
 }
 
+export type FallacyKind =
+  | 'ad_hominem'
+  | 'straw_man'
+  | 'false_dichotomy'
+  | 'slippery_slope'
+  | 'hasty_generalization'
+  | 'circular_reasoning'
+  | 'red_herring'
+  | 'whataboutism'
+  | 'burden_of_proof_shift'
+  | 'appeal_to_authority'
+  | 'correlation_causation';
+
+export type FallacyConfidence = 'low' | 'medium' | 'high';
+
+export type FallacySeverity = 'minor' | 'moderate' | 'serious';
+
+export interface FallacyDetectedEvent {
+  type: 'fallacy.detected';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  detectedAt: string;
+  transcriptLineCount: number;
+  speaker: string;
+  speakerLabel?: string;
+  fallacy: FallacyKind;
+  confidence: FallacyConfidence;
+  severity: FallacySeverity;
+  quote: string;
+  explanation: string;
+  suggestedRefereeResponse: string;
+}
+
+export interface FallacyDisabledEvent {
+  type: 'fallacy.disabled';
+  provider: 'gemini';
+  reason: 'disabled' | 'missing_gemini_api_key';
+}
+
+export interface FallacyErrorEvent {
+  type: 'fallacy.error';
+  provider: 'gemini';
+  message: string;
+}
+
 export type ConversationDebriefStatus =
   | 'completed'
   | 'disabled'
@@ -265,6 +312,9 @@ export type ServerEvent =
   | CompromiseSuggestedEvent
   | CompromiseDisabledEvent
   | CompromiseErrorEvent
+  | FallacyDetectedEvent
+  | FallacyDisabledEvent
+  | FallacyErrorEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent
