@@ -72,6 +72,54 @@ export interface ClaimDetectedEvent {
   endMs?: number;
 }
 
+export type CompromiseQuality =
+  | 'weak'
+  | 'promising'
+  | 'strong'
+  | 'really_good';
+
+export type CompromisePushLevel = 'normal' | 'firm' | 'urgent';
+
+export interface CompromiseSuggestion {
+  id: string;
+  rank: number;
+  title: string;
+  summary: string;
+  whyItCouldWork: string;
+  score: number;
+  quality: CompromiseQuality;
+  pushLevel: CompromisePushLevel;
+}
+
+export interface CompromiseSuggestedEvent {
+  type: 'compromise.suggested';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  generatedAt: string;
+  transcriptLineCount: number;
+  suggestions: CompromiseSuggestion[];
+}
+
+export interface CompromiseDisabledEvent {
+  type: 'compromise.disabled';
+  provider: 'gemini';
+  reason: 'missing_gemini_api_key';
+}
+
+export interface CompromiseErrorEvent {
+  type: 'compromise.error';
+  provider: 'gemini';
+  message: string;
+}
+
+export type ConversationDebriefStatus =
+  | 'completed'
+  | 'disabled'
+  | 'skipped'
+  | 'failed';
+
 export type SpeakerDiarizationStatus =
   | 'no_words'
   | 'missing_speaker_labels'
@@ -186,6 +234,9 @@ export type ServerEvent =
       bytesReceived: number;
       chunksReceived: number;
       storagePath: string;
+      debriefStoragePath?: string;
+      profileStoragePath?: string;
+      debriefStatus?: ConversationDebriefStatus;
     }
   | {
       type: 'transcription.connected';
@@ -211,6 +262,9 @@ export type ServerEvent =
   | TranscriptPartialEvent
   | TranscriptFinalEvent
   | ClaimDetectedEvent
+  | CompromiseSuggestedEvent
+  | CompromiseDisabledEvent
+  | CompromiseErrorEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent

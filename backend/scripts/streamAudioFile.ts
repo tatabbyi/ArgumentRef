@@ -99,6 +99,9 @@ function printEvent(event: ServerEvent): void {
     case 'fact_check.completed':
     case 'fact_check.skipped':
     case 'fact_check.failed':
+    case 'compromise.suggested':
+    case 'compromise.disabled':
+    case 'compromise.error':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;

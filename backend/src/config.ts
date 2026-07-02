@@ -14,6 +14,10 @@ export interface AppConfig {
   googleFactCheckLanguageCode: string;
   googleFactCheckPageSize: number;
   factCheckMaxClaimsPerSession: number;
+  geminiApiKey?: string;
+  geminiModel: string;
+  compromiseInitialDelayMs: number;
+  compromiseIntervalMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -37,6 +41,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.FACT_CHECK_MAX_CLAIMS_PER_SESSION,
       5,
     ),
+    geminiApiKey: env.GEMINI_API_KEY,
+    geminiModel: env.GEMINI_MODEL ?? 'gemini-3.5-flash',
+    compromiseInitialDelayMs: readNumber(env.COMPROMISE_INITIAL_DELAY_MS, 60_000),
+    compromiseIntervalMs: readNumber(env.COMPROMISE_INTERVAL_MS, 30_000),
   };
 }
 

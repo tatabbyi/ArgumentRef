@@ -93,6 +93,57 @@ And transcript events:
 }
 ```
 
+If Gemini is enabled, the backend watches the final transcript after one
+minute, then every 30 seconds, and emits ranked compromise ideas:
+
+```json
+{
+  "type": "compromise.suggested",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "sessionId": "demo-session",
+  "streamId": "...",
+  "generatedAt": "2026-07-02T12:00:00.000Z",
+  "transcriptLineCount": 8,
+  "suggestions": [
+    {
+      "id": "compromise-1-two-week-trial",
+      "rank": 1,
+      "title": "Two-week trial",
+      "summary": "Try the new plan for two weeks, then review it together.",
+      "whyItCouldWork": "It lowers commitment risk while addressing both concerns.",
+      "score": 94,
+      "quality": "really_good",
+      "pushLevel": "urgent"
+    }
+  ]
+}
+```
+
+When the stream ends, the backend also sends the final transcript to Gemini for
+a full conversation debrief and writes the result locally. The debrief file
+includes the raw final transcript, what the users argued about, the outcome or
+solution, per-person argument traits, observable interaction characteristics,
+and profile signals for the pair and each individual.
+
+The `session.ended` event points at the local files:
+
+```json
+{
+  "type": "session.ended",
+  "sessionId": "demo-session",
+  "streamId": "...",
+  "storagePath": "data/sessions/demo-session/device-1-....audio",
+  "debriefStatus": "completed",
+  "debriefStoragePath": "data/sessions/demo-session/device-1-...-debrief.json",
+  "profileStoragePath": "data/sessions/argument-profiles.json"
+}
+```
+
+If Gemini is not configured, the backend still writes the transcript JSON with
+`analysisStatus: "disabled"` and a `missing_gemini_api_key` reason. If no final
+transcript arrived, it writes `analysisStatus: "skipped"`.
+
 To flush metadata without ending the connection, send:
 
 ```json
@@ -105,9 +156,15 @@ To end the stream cleanly, send:
 { "type": "session.stop" }
 ```
 
-Received streams are written under `data/sessions/<sessionId>/` with a `.audio` file and matching JSON metadata. `data/` is intentionally ignored by Git.
+Received streams are written under `data/sessions/<sessionId>/` with a `.audio`
+file, matching JSON metadata, and a `*-debrief.json` file. Aggregate argument
+profiles are stored locally at `data/sessions/argument-profiles.json`. `data/`
+is intentionally ignored by Git.
 
 ## Environment
+
+For local development, put secrets in `backend/.env`. That file is ignored by
+Git and loaded automatically by `npm run dev` and `npm start`.
 
 ```sh
 PORT=8081
@@ -122,6 +179,10 @@ GOOGLE_FACT_CHECK_API_KEY=
 GOOGLE_FACT_CHECK_LANGUAGE_CODE=en-US
 GOOGLE_FACT_CHECK_PAGE_SIZE=3
 FACT_CHECK_MAX_CLAIMS_PER_SESSION=5
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash
+COMPROMISE_INITIAL_DELAY_MS=60000
+COMPROMISE_INTERVAL_MS=30000
 ```
 
 ## Deploy to Render
@@ -174,11 +235,13 @@ Future environment variables:
 
 ```sh
 DEEPGRAM_API_KEY=...
+GEMINI_API_KEY=...
 DATABASE_URL=...
 GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
 Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
+Add `GEMINI_API_KEY` there too to activate compromise suggestions. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
 

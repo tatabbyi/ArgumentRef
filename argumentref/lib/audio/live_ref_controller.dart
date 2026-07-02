@@ -21,9 +21,9 @@ class TranscriptLine {
 /// referee screen shows: which chair holds the floor (→ the ref's eyes/head),
 /// a running flow balance, a rough interruption count, and the live transcript.
 ///
-/// The two on-screen speakers are the two Deepgram diarization voices, mapped
-/// **first-heard → left, second-heard → right**. Diarization only clusters
-/// voices, so which real person is "left" is just a convention.
+/// When the backend sends calibration labels, those labels decide which chair a
+/// diarized voice belongs to. Older/no-label streams still fall back to
+/// **first-heard → left, second-heard → right**.
 class LiveRefController extends ChangeNotifier {
   LiveRefController({
     required this.leftName,
@@ -31,11 +31,13 @@ class LiveRefController extends ChangeNotifier {
     AudioSession? session,
     String? sessionId,
     String? participantId,
-  }) : session = session ??
-            AudioSession(
-              sessionId: sessionId ?? _generateId('sess'),
-              participantId: participantId ?? _generateId('phone'),
-            );
+  }) : session =
+           session ??
+           AudioSession(
+             sessionId: sessionId ?? _generateId('sess'),
+             participantId: participantId ?? _generateId('phone'),
+             speakerLabels: [leftName, rightName],
+           );
 
   final String leftName;
   final String rightName;
@@ -48,14 +50,17 @@ class LiveRefController extends ChangeNotifier {
 
   StreamSubscription<RefEvent>? _eventSub;
   Timer? _tick;
+  bool _started = false;
   bool _disposed = false;
 
   // Diarization label → chair (0 = left, 1 = right), in first-heard order.
   final Map<String, int> _speakerSlots = {};
+  final Set<String> _mappedLabels = {};
 
   Speaker _activeSpeaker = Speaker.none;
   DateTime _lastActivityAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _concernUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _ignoreConversationUntil = DateTime.fromMillisecondsSinceEpoch(0);
   bool _hasHeardAnything = false;
 
   bool _idle = true;
@@ -67,8 +72,11 @@ class LiveRefController extends ChangeNotifier {
 
   bool _transcriptionLive = false;
   bool _transcriptionDisabled = false;
+  bool _compromisesDisabled = false;
+  String? _compromiseError;
 
   final List<TranscriptLine> _lines = [];
+  final List<CompromiseSuggestion> _compromises = [];
   String _partialText = '';
   Speaker _partialSpeaker = Speaker.none;
 
@@ -78,12 +86,33 @@ class LiveRefController extends ChangeNotifier {
 
   /// The current referee "beat" — active speaker + mood + mouth + a coaching
   /// caption (with `{L}` / `{R}` tokens the screen fills in).
-  Beat get beat => Beat(
+  Beat get beat {
+    final pushed = topCompromise;
+    if (pushed != null && pushed.shouldPushHard) {
+      return Beat(
         active: _idle ? Speaker.none : _activeSpeaker,
-        mood: _concerned ? Mood.concern : Mood.listen,
-        mouth: _concerned ? MouthShape.tense : MouthShape.neutral,
-        caption: _caption(),
+        mood: Mood.alert,
+        mouth: MouthShape.tense,
+        caption: 'Try this deal now: ${pushed.title}',
       );
+    }
+
+    if (pushed != null && pushed.quality == CompromiseQuality.strong) {
+      return Beat(
+        active: _idle ? Speaker.none : _activeSpeaker,
+        mood: Mood.approve,
+        mouth: MouthShape.smile,
+        caption: 'Strong compromise: ${pushed.title}',
+      );
+    }
+
+    return Beat(
+      active: _idle ? Speaker.none : _activeSpeaker,
+      mood: _concerned ? Mood.concern : Mood.listen,
+      mouth: _concerned ? MouthShape.tense : MouthShape.neutral,
+      caption: _caption(),
+    );
+  }
 
   /// Left speaker's share of the floor, 0–100 (50 until anyone speaks).
   int get flow {
@@ -97,6 +126,20 @@ class LiveRefController extends ChangeNotifier {
   /// Finalised transcript, oldest first.
   List<TranscriptLine> get transcript => List.unmodifiable(_lines);
 
+  /// Ranked compromise ideas from the backend, best first.
+  List<CompromiseSuggestion> get compromises => List.unmodifiable(_compromises);
+
+  bool get hasCompromises => _compromises.isNotEmpty;
+
+  CompromiseSuggestion? get topCompromise =>
+      _compromises.isEmpty ? null : _compromises.first;
+
+  String? get compromiseStatusLabel {
+    if (_compromisesDisabled) return 'Compromise coach needs Gemini';
+    if (_compromiseError != null) return 'Compromise coach is catching up';
+    return null;
+  }
+
   /// The in-flight (interim) line, if any — shown greyed so you can see the ref
   /// hearing words as they land.
   String get partialText => _partialText;
@@ -104,6 +147,7 @@ class LiveRefController extends ChangeNotifier {
   bool get hasPartial => _partialText.isNotEmpty;
 
   AudioSessionStatus get status => session.status;
+  bool get isStarted => _started;
 
   bool get micDenied => status == AudioSessionStatus.permissionDenied;
   bool get isError => status == AudioSessionStatus.error;
@@ -130,9 +174,14 @@ class LiveRefController extends ChangeNotifier {
     }
   }
 
+  bool hasMappedLabel(String label) =>
+      _mappedLabels.contains(_normalizeLabel(label));
+
   // ── lifecycle ────────────────────────────────────────────────────────────
 
   Future<void> start() async {
+    if (_started) return;
+    _started = true;
     _eventSub = session.events.listen(_onEvent);
     session.statusListenable.addListener(_onStatusChanged);
     _tick = Timer.periodic(const Duration(milliseconds: 400), (_) => _onTick());
@@ -141,6 +190,31 @@ class LiveRefController extends ChangeNotifier {
   }
 
   Future<void> stop() => session.stop();
+
+  /// Clears the visible conversation state while keeping the live socket and
+  /// any backend speaker mappings learned during calibration.
+  void resetConversationStats({Duration ignoreIncoming = Duration.zero}) {
+    _activeSpeaker = Speaker.none;
+    _lastActivityAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _concernUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    _ignoreConversationUntil =
+        ignoreIncoming > Duration.zero
+            ? DateTime.now().add(ignoreIncoming)
+            : DateTime.fromMillisecondsSinceEpoch(0);
+    _hasHeardAnything = false;
+    _idle = true;
+    _concerned = false;
+    _leftWeight = 0;
+    _rightWeight = 0;
+    _cutIns = 0;
+    _lines.clear();
+    _compromises.clear();
+    _compromiseError = null;
+    _partialText = '';
+    _partialSpeaker = Speaker.none;
+    _signature = '';
+    _refresh();
+  }
 
   @override
   void dispose() {
@@ -172,8 +246,16 @@ class LiveRefController extends ChangeNotifier {
         _transcriptionLive = true;
       case TranscriptionDisabledEvent():
         _transcriptionDisabled = true;
+      case SpeakerMappedEvent():
+        _handleSpeakerMapped(event);
       case TranscriptEvent(isEmpty: false):
         _handleTranscript(event);
+      case CompromiseSuggestedEvent(suggestions: final suggestions):
+        _handleCompromises(suggestions);
+      case CompromiseDisabledEvent():
+        _compromisesDisabled = true;
+      case CompromiseErrorEvent(message: final message):
+        _compromiseError = message;
       case _:
         break;
     }
@@ -182,7 +264,11 @@ class LiveRefController extends ChangeNotifier {
 
   void _handleTranscript(TranscriptEvent event) {
     final now = DateTime.now();
-    final speaker = _resolveSpeaker(event.speaker);
+    final speaker = _resolveSpeaker(
+      event.speaker,
+      speakerLabel: event.speakerLabel,
+    );
+    if (now.isBefore(_ignoreConversationUntil)) return;
 
     // Cut-in heuristic: the floor changed hands while the previous voice had
     // only just been active — i.e. they talked over each other.
@@ -215,15 +301,43 @@ class LiveRefController extends ChangeNotifier {
     if (_lines.length > _maxLines) _lines.removeAt(0);
   }
 
+  void _handleCompromises(List<CompromiseSuggestion> suggestions) {
+    _compromiseError = null;
+    _compromisesDisabled = false;
+    if (suggestions.isEmpty) return;
+
+    _compromises
+      ..clear()
+      ..addAll([...suggestions]..sort((a, b) => a.rank.compareTo(b.rank)));
+  }
+
   void _addWeight(Speaker speaker, String text) {
     final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
     if (speaker == Speaker.left) _leftWeight += words;
     if (speaker == Speaker.right) _rightWeight += words;
   }
 
+  void _handleSpeakerMapped(SpeakerMappedEvent event) {
+    final slot = _slotForLabel(event.speakerLabel);
+    if (slot == null) return;
+    if (event.speaker != 'speaker_unknown') {
+      _speakerSlots[event.speaker] = slot;
+    }
+    _mappedLabels.add(_normalizeLabel(event.speakerLabel));
+  }
+
   /// Maps a diarization label to a chair. Unknown labels stick with whoever's
   /// already talking; a third voice keeps the current chair (only two seats).
-  Speaker _resolveSpeaker(String id) {
+  Speaker _resolveSpeaker(String id, {String? speakerLabel}) {
+    final labelledSlot = _slotForLabel(speakerLabel);
+    if (labelledSlot != null) {
+      if (id != 'speaker_unknown') {
+        _speakerSlots[id] = labelledSlot;
+      }
+      _mappedLabels.add(_normalizeLabel(speakerLabel!));
+      return labelledSlot == 0 ? Speaker.left : Speaker.right;
+    }
+
     if (id == 'speaker_unknown') {
       return _activeSpeaker == Speaker.none ? Speaker.left : _activeSpeaker;
     }
@@ -235,12 +349,22 @@ class LiveRefController extends ChangeNotifier {
     return slot == 0 ? Speaker.left : Speaker.right;
   }
 
+  int? _slotForLabel(String? label) {
+    final normalized = _normalizeLabel(label);
+    if (normalized.isEmpty) return null;
+    if (normalized == _normalizeLabel(leftName)) return 0;
+    if (normalized == _normalizeLabel(rightName)) return 1;
+    return null;
+  }
+
   String _caption() {
     if (micDenied) return 'Enable mic access to referee live';
     if (_transcriptionDisabled) return 'Transcription is off on the server';
     if (_concerned) return 'One at a time';
     if (!_hasHeardAnything) {
-      return status == AudioSessionStatus.streaming ? 'Listening…' : 'Warming up…';
+      return status == AudioSessionStatus.streaming
+          ? 'Listening…'
+          : 'Warming up…';
     }
     return switch (_idle ? Speaker.none : _activeSpeaker) {
       Speaker.left => 'Go on, {L}',
@@ -254,13 +378,19 @@ class LiveRefController extends ChangeNotifier {
   void _refresh() {
     if (_disposed) return;
     final now = DateTime.now();
-    _idle = !_hasHeardAnything ||
+    _idle =
+        !_hasHeardAnything ||
         now.difference(_lastActivityAt).inMilliseconds > _idleGapMs;
     _concerned = now.isBefore(_concernUntil);
 
     final active = _idle ? Speaker.none : _activeSpeaker;
-    final sig = '$active|$_concerned|$flow|$_cutIns|$statusLabel|'
-        '$_partialSpeaker:$_partialText|${_lines.length}';
+    final mappedLabels = _mappedLabels.toList()..sort();
+    final top = topCompromise;
+    final sig =
+        '$active|$_concerned|$flow|$_cutIns|$statusLabel|'
+        '${mappedLabels.join(',')}|'
+        '$_partialSpeaker:$_partialText|${_lines.length}|'
+        '${top?.id}:${top?.score}|$_compromisesDisabled|$_compromiseError';
     if (sig == _signature) return;
     _signature = sig;
     notifyListeners();
@@ -271,4 +401,7 @@ class LiveRefController extends ChangeNotifier {
     final rand = math.Random().nextInt(0x7fffffff);
     return '$prefix-$ts-$rand';
   }
+
+  static String _normalizeLabel(String? label) =>
+      label?.trim().toLowerCase() ?? '';
 }

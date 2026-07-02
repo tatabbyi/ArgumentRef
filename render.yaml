@@ -22,9 +22,19 @@ services:
         value: en-US
       - key: FACT_CHECK_ENABLED
         value: true
+      - key: GOOGLE_FACT_CHECK_API_KEY
+        sync: false
       - key: GOOGLE_FACT_CHECK_LANGUAGE_CODE
         value: en-US
       - key: GOOGLE_FACT_CHECK_PAGE_SIZE
         value: 3
       - key: FACT_CHECK_MAX_CLAIMS_PER_SESSION
         value: 5
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: COMPROMISE_INITIAL_DELAY_MS
+        value: 60000
+      - key: COMPROMISE_INTERVAL_MS
+        value: 30000

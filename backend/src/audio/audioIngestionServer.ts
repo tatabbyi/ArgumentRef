@@ -17,6 +17,8 @@ import {
 } from '../transcription/deepgramTranscriber.js';
 import { ClaimDetector } from '../claims/claimDetector.js';
 import { createFactCheckService } from '../factChecks/factCheckService.js';
+import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
+import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
@@ -120,6 +122,20 @@ async function handleAudioConnection(
   });
   const claimDetector = new ClaimDetector();
   const factCheckService = createFactCheckService(config);
+  const compromiseAdvisor = new CompromiseAdvisor({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: (event) => sendEvent(webSocket, event),
+  });
+  const debriefer = new ConversationDebriefer({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    participantId: recorder.participantId,
+    config,
+    debriefPath: recorder.debriefPath,
+    profilePath: recorder.profilePath,
+  });
   const speakerLabeler = new SpeakerLabeler({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -135,6 +151,8 @@ async function handleAudioConnection(
       sendEvent(webSocket, labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
+        compromiseAdvisor.recordTranscript(labelled.event);
+        debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
         if (claim) {
           sendEvent(webSocket, claim);
@@ -158,6 +176,7 @@ async function handleAudioConnection(
     audio,
     acceptedBinaryAudio: true,
   });
+  compromiseAdvisor.start();
 
   const transcriber = createDeepgramTranscriber(
     config,
@@ -168,19 +187,36 @@ async function handleAudioConnection(
     },
     emitEvent,
   );
+  let ending: Promise<void> | null = null;
+  const finishConnection = (sendEnded: boolean) => {
+    ending ??= endSession({
+      webSocket,
+      recorder,
+      transcriber,
+      compromiseAdvisor,
+      debriefer,
+      sendEnded,
+    });
+    return ending;
+  };
 
   webSocket.on('message', (data, isBinary) => {
-    void handleMessage(webSocket, recorder, transcriber, data, isBinary);
+    void handleMessage(
+      webSocket,
+      recorder,
+      transcriber,
+      () => finishConnection(true),
+      data,
+      isBinary,
+    );
   });
 
   webSocket.on('close', () => {
-    transcriber.close();
-    void recorder.close();
+    void finishConnection(false).catch(() => undefined);
   });
 
   webSocket.on('error', () => {
-    transcriber.close();
-    void recorder.close();
+    void finishConnection(false).catch(() => undefined);
   });
 }
 
@@ -188,6 +224,7 @@ async function handleMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
   transcriber: Transcriber,
+  endSession: () => Promise<void>,
   data: WebSocket.RawData,
   isBinary: boolean,
 ): Promise<void> {
@@ -206,7 +243,12 @@ async function handleMessage(
       return;
     }
 
-    await handleControlMessage(webSocket, recorder, transcriber, data.toString('utf8'));
+    await handleControlMessage(
+      webSocket,
+      recorder,
+      endSession,
+      data.toString('utf8'),
+    );
   } catch (error) {
     sendError(webSocket, error);
   }
@@ -215,7 +257,7 @@ async function handleMessage(
 async function handleControlMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
-  transcriber: Transcriber,
+  endSession: () => Promise<void>,
   payload: string,
 ): Promise<void> {
   const message = parseClientControlMessage(payload);
@@ -236,30 +278,41 @@ async function handleControlMessage(
       sendAudioCommitted(webSocket, recorder);
       return;
     case 'session.stop':
-      await endSession(webSocket, recorder, transcriber);
+      await endSession();
       return;
     default:
       assertNever(message);
   }
 }
 
-async function endSession(
-  webSocket: WebSocket,
-  recorder: AudioStreamRecorder,
-  transcriber: Transcriber,
-): Promise<void> {
-  transcriber.close();
-  const snapshot = await recorder.close();
-  sendEvent(webSocket, {
-    type: 'session.ended',
-    sessionId: snapshot.sessionId,
-    streamId: snapshot.streamId,
-    participantId: snapshot.participantId,
-    bytesReceived: snapshot.bytesReceived,
-    chunksReceived: snapshot.chunksReceived,
-    storagePath: snapshot.filePath,
-  });
-  webSocket.close(1000, 'session stopped');
+async function endSession(options: {
+  webSocket: WebSocket;
+  recorder: AudioStreamRecorder;
+  transcriber: Transcriber;
+  compromiseAdvisor: CompromiseAdvisor;
+  debriefer: ConversationDebriefer;
+  sendEnded: boolean;
+}): Promise<void> {
+  options.compromiseAdvisor.close();
+  options.transcriber.close();
+  const snapshot = await options.recorder.close();
+  const debrief = await options.debriefer.finish(snapshot);
+
+  if (options.sendEnded) {
+    sendEvent(options.webSocket, {
+      type: 'session.ended',
+      sessionId: snapshot.sessionId,
+      streamId: snapshot.streamId,
+      participantId: snapshot.participantId,
+      bytesReceived: snapshot.bytesReceived,
+      chunksReceived: snapshot.chunksReceived,
+      storagePath: snapshot.filePath,
+      debriefStoragePath: debrief.debriefPath,
+      profileStoragePath: debrief.profilePath,
+      debriefStatus: debrief.status,
+    });
+    options.webSocket.close(1000, 'session stopped');
+  }
 }
 
 function sendAudioCommitted(
