@@ -49,8 +49,33 @@ sealed class RefEvent {
         return TranscriptEvent(
           isFinal: type == 'transcript.final',
           speaker: _str(decoded['speaker'], fallback: 'speaker_unknown'),
+          speakerLabel: _strOrNull(decoded['speakerLabel']),
           text: _str(decoded['text']).trim(),
           confidence: _doubleOrNull(decoded['confidence']),
+        );
+      case 'compromise.suggested':
+        return CompromiseSuggestedEvent(
+          model: _str(decoded['model']),
+          generatedAt: _str(decoded['generatedAt']),
+          transcriptLineCount: _int(decoded['transcriptLineCount']),
+          suggestions: _compromiseSuggestions(decoded['suggestions']),
+        );
+      case 'compromise.disabled':
+        return CompromiseDisabledEvent(_str(decoded['reason']));
+      case 'compromise.error':
+        return CompromiseErrorEvent(_str(decoded['message']));
+      case 'speaker.diarization_status':
+        return SpeakerDiarizationStatusEvent(
+          status: _str(decoded['status']),
+          speakers: _stringList(decoded['speakers']),
+          totalWords: _int(decoded['totalWords']),
+          wordsWithSpeaker: _int(decoded['wordsWithSpeaker']),
+          message: _str(decoded['message']),
+        );
+      case 'speaker.mapped':
+        return SpeakerMappedEvent(
+          speaker: _str(decoded['speaker'], fallback: 'speaker_unknown'),
+          speakerLabel: _str(decoded['speakerLabel']),
         );
       case 'session.ended':
         return SessionEndedEvent(
@@ -125,16 +150,104 @@ class TranscriptEvent extends RefEvent {
   const TranscriptEvent({
     required this.isFinal,
     required this.speaker,
+    this.speakerLabel,
     required this.text,
     this.confidence,
   });
 
   final bool isFinal;
   final String speaker;
+  final String? speakerLabel;
   final String text;
   final double? confidence;
 
   bool get isEmpty => text.isEmpty;
+}
+
+enum CompromiseQuality { weak, promising, strong, reallyGood }
+
+enum CompromisePushLevel { normal, firm, urgent }
+
+/// One ranked possible agreement produced by the backend compromise advisor.
+class CompromiseSuggestion {
+  const CompromiseSuggestion({
+    required this.id,
+    required this.rank,
+    required this.title,
+    required this.summary,
+    required this.whyItCouldWork,
+    required this.score,
+    required this.quality,
+    required this.pushLevel,
+  });
+
+  final String id;
+  final int rank;
+  final String title;
+  final String summary;
+  final String whyItCouldWork;
+  final int score;
+  final CompromiseQuality quality;
+  final CompromisePushLevel pushLevel;
+
+  bool get isReallyGood => quality == CompromiseQuality.reallyGood;
+
+  bool get shouldPushHard =>
+      isReallyGood || pushLevel == CompromisePushLevel.urgent;
+}
+
+/// A fresh ranked set of compromise suggestions for the current transcript.
+class CompromiseSuggestedEvent extends RefEvent {
+  const CompromiseSuggestedEvent({
+    required this.model,
+    required this.generatedAt,
+    required this.transcriptLineCount,
+    required this.suggestions,
+  });
+
+  final String model;
+  final String generatedAt;
+  final int transcriptLineCount;
+  final List<CompromiseSuggestion> suggestions;
+}
+
+/// The backend has no `GEMINI_API_KEY`, so compromise suggestions are off.
+class CompromiseDisabledEvent extends RefEvent {
+  const CompromiseDisabledEvent(this.reason);
+
+  final String reason;
+}
+
+/// Gemini or compromise analysis failed mid-session.
+class CompromiseErrorEvent extends RefEvent {
+  const CompromiseErrorEvent(this.message);
+
+  final String message;
+}
+
+/// Deepgram's rolling summary of whether diarization is returning speaker IDs.
+class SpeakerDiarizationStatusEvent extends RefEvent {
+  const SpeakerDiarizationStatusEvent({
+    required this.status,
+    required this.speakers,
+    required this.totalWords,
+    required this.wordsWithSpeaker,
+    required this.message,
+  });
+
+  final String status;
+  final List<String> speakers;
+  final int totalWords;
+  final int wordsWithSpeaker;
+  final String message;
+}
+
+/// The backend assigned an anonymous diarization speaker to a calibration name.
+class SpeakerMappedEvent extends RefEvent {
+  const SpeakerMappedEvent({required this.speaker, required this.speakerLabel});
+
+  final String speaker;
+  final String speakerLabel;
 }
 
 /// The session was closed cleanly by the server.
@@ -167,6 +280,71 @@ class UnknownEvent extends RefEvent {
 String _str(Object? value, {String fallback = ''}) =>
     value is String ? value : fallback;
 
+String? _strOrNull(Object? value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 int _int(Object? value) => value is num ? value.toInt() : 0;
 
 double? _doubleOrNull(Object? value) => value is num ? value.toDouble() : null;
+
+List<CompromiseSuggestion> _compromiseSuggestions(Object? value) {
+  if (value is! List) return const [];
+
+  return [
+    for (var i = 0; i < value.length; i++)
+      if (_compromiseSuggestion(value[i], i) case final suggestion?) suggestion,
+  ];
+}
+
+CompromiseSuggestion? _compromiseSuggestion(Object? value, int index) {
+  if (value is! Map<String, dynamic>) return null;
+
+  final title = _str(value['title']).trim();
+  final summary = _str(value['summary']).trim();
+  if (title.isEmpty || summary.isEmpty) return null;
+
+  return CompromiseSuggestion(
+    id: _str(value['id'], fallback: 'compromise-${index + 1}'),
+    rank: _positiveInt(value['rank'], fallback: index + 1),
+    title: title,
+    summary: summary,
+    whyItCouldWork: _str(value['whyItCouldWork']).trim(),
+    score: _score(value['score']),
+    quality: _quality(value['quality']),
+    pushLevel: _pushLevel(value['pushLevel']),
+  );
+}
+
+int _positiveInt(Object? value, {required int fallback}) {
+  final parsed = _int(value);
+  return parsed > 0 ? parsed : fallback;
+}
+
+int _score(Object? value) {
+  final parsed = value is num ? value.round() : 0;
+  return parsed.clamp(0, 100).toInt();
+}
+
+CompromiseQuality _quality(Object? value) => switch (_str(value)) {
+  'really_good' => CompromiseQuality.reallyGood,
+  'strong' => CompromiseQuality.strong,
+  'promising' => CompromiseQuality.promising,
+  _ => CompromiseQuality.weak,
+};
+
+CompromisePushLevel _pushLevel(Object? value) => switch (_str(value)) {
+  'urgent' => CompromisePushLevel.urgent,
+  'firm' => CompromisePushLevel.firm,
+  _ => CompromisePushLevel.normal,
+};
+
+List<String> _stringList(Object? value) {
+  if (value is! List) return const [];
+  return [
+    for (final item in value)
+      if (item is String) item,
+  ];
+}

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../audio/ref_events.dart';
 import '../audio/live_ref_controller.dart';
 import '../ui/ref_theme.dart';
 import 'beats.dart';
@@ -30,6 +31,7 @@ class CenterRefScreen extends StatefulWidget {
     this.rightName = 'Devin',
     this.onEnd,
     this.live = false,
+    this.liveController,
   });
 
   /// The speaker on the left (green). Defaults to the prototype's "Maya".
@@ -45,6 +47,9 @@ class CenterRefScreen extends StatefulWidget {
   /// When true, capture the microphone and drive the ref from real transcripts
   /// instead of the scripted [kBeats] demo loop.
   final bool live;
+
+  /// An already-started live pipeline, usually handed off from calibration.
+  final LiveRefController? liveController;
 
   @override
   State<CenterRefScreen> createState() => _CenterRefScreenState();
@@ -103,11 +108,13 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     _liveDot = _repeat(const Duration(milliseconds: 800), reverse: true);
     _ping = _repeat(const Duration(milliseconds: 1500));
 
-    if (widget.live) {
-      final controller = LiveRefController(
-        leftName: widget.leftName,
-        rightName: widget.rightName,
-      );
+    if (widget.live || widget.liveController != null) {
+      final controller =
+          widget.liveController ??
+          LiveRefController(
+            leftName: widget.leftName,
+            rightName: widget.rightName,
+          );
       _live = controller;
       controller.addListener(_onLive);
       // Fire-and-forget: status/errors surface through the controller's state.
@@ -186,6 +193,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             if (_live != null) _statusBar(_live!),
             _guidance(),
             Expanded(child: _stage()),
+            if (_live != null) _compromisePanel(_live!),
             if (_live != null) _transcriptPanel(_live!),
             _stats(),
             _endButton(),
@@ -288,6 +296,184 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     );
   }
 
+  // ── Live compromises ────────────────────────────────────────────────────
+  Widget _compromisePanel(LiveRefController live) {
+    final suggestions = live.compromises;
+    final status = live.compromiseStatusLabel;
+
+    return Container(
+      height: 122,
+      margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      decoration: BoxDecoration(
+        color: RefPalette.cream,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: RefPalette.ink.withValues(alpha: 0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: RefPalette.ink.withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child:
+          suggestions.isEmpty
+              ? Center(
+                child: Text(
+                  status ?? 'Listening for a fair deal.',
+                  textAlign: TextAlign.center,
+                  style: mulish(
+                    size: 12.5,
+                    weight: FontWeight.w700,
+                    color: RefPalette.ink.withValues(alpha: 0.48),
+                  ),
+                ),
+              )
+              : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'COMPROMISES',
+                        style: mulish(
+                          size: 10,
+                          weight: FontWeight.w800,
+                          color: RefPalette.ink.withValues(alpha: 0.48),
+                        ),
+                      ),
+                      Text(
+                        '${suggestions.first.score}/100',
+                        style: mulish(
+                          size: 10.5,
+                          weight: FontWeight.w800,
+                          color: _compromiseColor(suggestions.first),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: EdgeInsets.zero,
+                      itemCount: suggestions.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 6),
+                      itemBuilder:
+                          (context, index) =>
+                              _compromiseTile(suggestions[index]),
+                    ),
+                  ),
+                ],
+              ),
+    );
+  }
+
+  Widget _compromiseTile(CompromiseSuggestion suggestion) {
+    final color = _compromiseColor(suggestion);
+    final urgent = suggestion.shouldPushHard;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: urgent ? 0.14 : 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: urgent ? 0.42 : 0.18),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Text(
+              '${suggestion.rank}',
+              style: zilla(
+                size: 14,
+                weight: FontWeight.w700,
+                color: RefPalette.cream,
+                height: 1,
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        suggestion.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: zilla(
+                          size: urgent ? 15 : 14,
+                          weight: FontWeight.w700,
+                          color: RefPalette.ink,
+                          height: 1.05,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _compromiseLabel(suggestion),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: mulish(
+                        size: 9.5,
+                        weight: FontWeight.w900,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  suggestion.summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: mulish(
+                    size: 11.5,
+                    weight: FontWeight.w600,
+                    color: RefPalette.ink.withValues(alpha: 0.68),
+                    height: 1.15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _compromiseColor(CompromiseSuggestion suggestion) {
+    if (suggestion.shouldPushHard) return RefPalette.red;
+    return switch (suggestion.quality) {
+      CompromiseQuality.strong => RefPalette.green,
+      CompromiseQuality.promising => RefPalette.orange,
+      CompromiseQuality.weak => RefPalette.olive,
+      CompromiseQuality.reallyGood => RefPalette.red,
+    };
+  }
+
+  String _compromiseLabel(CompromiseSuggestion suggestion) {
+    if (suggestion.shouldPushHard) return 'PUSH THIS';
+    return switch (suggestion.quality) {
+      CompromiseQuality.reallyGood => 'REALLY GOOD',
+      CompromiseQuality.strong => 'STRONG',
+      CompromiseQuality.promising => 'PROMISING',
+      CompromiseQuality.weak => 'EARLY',
+    };
+  }
+
   // ── Live transcript ─────────────────────────────────────────────────────
   /// The rolling transcript beneath the ref: finalised lines plus the in-flight
   /// (interim) line, newest at the bottom.
@@ -308,21 +494,22 @@ class _CenterRefScreenState extends State<CenterRefScreen>
         color: RefPalette.ink.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: rows.isEmpty
-          ? Center(
-              child: Text(
-                'What everyone says will show up here.',
-                style: mulish(
-                  size: 12.5,
-                  color: RefPalette.ink.withValues(alpha: 0.4),
+      child:
+          rows.isEmpty
+              ? Center(
+                child: Text(
+                  'What everyone says will show up here.',
+                  style: mulish(
+                    size: 12.5,
+                    color: RefPalette.ink.withValues(alpha: 0.4),
+                  ),
                 ),
+              )
+              : ListView(
+                reverse: true,
+                padding: EdgeInsets.zero,
+                children: rows,
               ),
-            )
-          : ListView(
-              reverse: true,
-              padding: EdgeInsets.zero,
-              children: rows,
-            ),
     );
   }
 
@@ -515,11 +702,12 @@ class _CenterRefScreenState extends State<CenterRefScreen>
               tween: Tween(end: _flow / 100),
               duration: const Duration(milliseconds: 600),
               curve: Curves.easeInOut,
-              builder: (context, value, _) => FractionallySizedBox(
-                alignment: Alignment.centerLeft,
-                widthFactor: value.clamp(0.0, 1.0),
-                child: const ColoredBox(color: RefPalette.green),
-              ),
+              builder:
+                  (context, value, _) => FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: value.clamp(0.0, 1.0),
+                    child: const ColoredBox(color: RefPalette.green),
+                  ),
             ),
           ),
         ),
@@ -641,8 +829,8 @@ class _Speaker extends StatelessWidget {
                         animation: ping,
                         builder: (context, _) {
                           final v = ping.value;
-                          final scale = 0.65 +
-                              (1.9 - 0.65) * Curves.easeOut.transform(v);
+                          final scale =
+                              0.65 + (1.9 - 0.65) * Curves.easeOut.transform(v);
                           final opacity = v < 0.8 ? 0.5 * (1 - v / 0.8) : 0.0;
                           return Transform.scale(
                             scale: scale,
@@ -680,10 +868,7 @@ class _Speaker extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              name,
-              style: zilla(size: 14, weight: FontWeight.w600),
-            ),
+            Text(name, style: zilla(size: 14, weight: FontWeight.w600)),
           ],
         ),
       ),

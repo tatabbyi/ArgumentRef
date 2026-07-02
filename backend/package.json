@@ -16,6 +16,7 @@
     "test:remote-audio": "tsx scripts/streamAudioFile.ts"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   },

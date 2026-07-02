@@ -35,6 +35,7 @@ class AudioSession {
     required this.participantId,
     this.sampleRateHz = 16000,
     this.channels = 1,
+    this.speakerLabels = const [],
     AudioRecorder? recorder,
   }) : _injectedRecorder = recorder;
 
@@ -45,6 +46,7 @@ class AudioSession {
   /// and what the backend/Deepgram config expects.
   final int sampleRateHz;
   final int channels;
+  final List<String> speakerLabels;
 
   // Created lazily on [start] so merely constructing a session (e.g. in a unit
   // test) never touches the platform recorder plugin.
@@ -109,6 +111,7 @@ class AudioSession {
           participantId: participantId,
           sampleRateHz: sampleRateHz,
           channels: channels,
+          speakerLabels: speakerLabels,
         ),
       );
       _channel = channel;

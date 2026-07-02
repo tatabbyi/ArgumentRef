@@ -27,7 +27,12 @@ class BackendConfig {
     required String participantId,
     required int sampleRateHz,
     required int channels,
+    List<String> speakerLabels = const [],
   }) {
+    final labels = speakerLabels
+        .map((label) => label.trim())
+        .where((label) => label.isNotEmpty)
+        .toList(growable: false);
     return Uri.parse('$wsOrigin$audioPath').replace(
       queryParameters: {
         'sessionId': sessionId,
@@ -35,6 +40,7 @@ class BackendConfig {
         'encoding': 'pcm16',
         'sampleRateHz': '$sampleRateHz',
         'channels': '$channels',
+        if (labels.isNotEmpty) 'speakerLabels': labels.join(','),
       },
     );
   }

@@ -20,6 +20,9 @@ describe('audio ingestion websocket', () => {
       maxAudioChunkBytes: 1024 * 1024,
       deepgramModel: 'nova-3',
       deepgramLanguage: 'en-US',
+      geminiModel: 'gemini-3.5-flash',
+      compromiseInitialDelayMs: 60_000,
+      compromiseIntervalMs: 30_000,
     });
     port = await server.listen();
   });
@@ -49,9 +52,23 @@ describe('audio ingestion websocket', () => {
     const ended = await waitForEvent(socket, 'session.ended');
     expect(ended.bytesReceived).toBe(4);
     expect(ended.chunksReceived).toBe(1);
+    expect(ended.debriefStatus).toBe('skipped');
+    expect(ended.debriefStoragePath).toBeTruthy();
 
     const stored = await readFile(ended.storagePath);
     expect([...stored]).toEqual([1, 2, 3, 4]);
+
+    if (!ended.debriefStoragePath) {
+      throw new Error('Expected session.ended to include debriefStoragePath');
+    }
+    const debrief = JSON.parse(await readFile(ended.debriefStoragePath, 'utf8')) as {
+      analysisStatus: string;
+      analysisError: { code: string };
+      transcriptLineCount: number;
+    };
+    expect(debrief.analysisStatus).toBe('skipped');
+    expect(debrief.analysisError.code).toBe('no_transcript');
+    expect(debrief.transcriptLineCount).toBe(0);
   });
 
   it('responds to the health endpoint', async () => {

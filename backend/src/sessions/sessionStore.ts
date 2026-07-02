@@ -18,6 +18,8 @@ export interface AudioStreamSnapshot {
   bytesReceived: number;
   chunksReceived: number;
   filePath: string;
+  debriefPath: string;
+  profilePath: string;
 }
 
 export class SessionStore {
@@ -33,6 +35,8 @@ export class SessionStore {
     const fileName = `${participantId}-${streamId}.audio`;
     const filePath = path.join(sessionDir, fileName);
     const metadataPath = path.join(sessionDir, `${participantId}-${streamId}.json`);
+    const debriefPath = path.join(sessionDir, `${participantId}-${streamId}-debrief.json`);
+    const profilePath = path.join(this.baseDir, 'argument-profiles.json');
 
     await mkdir(sessionDir, { recursive: true });
 
@@ -42,6 +46,8 @@ export class SessionStore {
       participantId,
       filePath,
       metadataPath,
+      debriefPath,
+      profilePath,
       audio: input.audio,
     });
 
@@ -56,6 +62,8 @@ interface AudioStreamRecorderInput {
   participantId: string;
   filePath: string;
   metadataPath: string;
+  debriefPath: string;
+  profilePath: string;
   audio: AudioFormat;
 }
 
@@ -86,6 +94,14 @@ export class AudioStreamRecorder {
     return this.input.filePath;
   }
 
+  get debriefPath(): string {
+    return this.input.debriefPath;
+  }
+
+  get profilePath(): string {
+    return this.input.profilePath;
+  }
+
   snapshot(): AudioStreamSnapshot {
     return {
       sessionId: this.sessionId,
@@ -94,6 +110,8 @@ export class AudioStreamRecorder {
       bytesReceived: this.bytesReceived,
       chunksReceived: this.chunksReceived,
       filePath: this.filePath,
+      debriefPath: this.debriefPath,
+      profilePath: this.profilePath,
     };
   }
 
@@ -143,6 +161,8 @@ export class AudioStreamRecorder {
       bytesReceived: this.bytesReceived,
       chunksReceived: this.chunksReceived,
       filePath: this.filePath,
+      debriefPath: this.debriefPath,
+      profilePath: this.profilePath,
     };
 
     await writeFile(

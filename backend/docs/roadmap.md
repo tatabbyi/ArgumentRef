@@ -94,7 +94,23 @@ Example event:
 }
 ```
 
-## Phase 5: Session Storage
+## Phase 5: Compromise Suggestions
+
+Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
+rolling final transcript, checks it after one minute, then every 30 seconds, and
+emits ranked compromise suggestions to the mobile app.
+
+```text
+transcript.final
+  -> rolling transcript
+  -> Gemini Interactions API
+  -> compromise.suggested event
+```
+
+Top-tier suggestions carry `quality: "really_good"` and `pushLevel: "urgent"`
+so the frontend can make the referee push them harder.
+
+## Phase 6: Session Storage
 
 Add a database and object storage.
 
