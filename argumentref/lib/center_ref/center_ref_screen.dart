@@ -121,6 +121,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             leftName: widget.leftName,
             rightName: widget.rightName,
             compromiseSoundPlayer: RefereeWhistlePlayer(),
+            timeOutSoundPlayer: LongWhiteTimeOutPlayer(),
             voice: ElevenLabsRefVoice(),
           );
       _live = controller;
@@ -243,18 +244,111 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     return ColoredBox(
       color: RefPalette.cream,
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Stack(
           children: [
-            _title(),
-            if (_live != null) _statusBar(_live!),
-            _guidance(),
-            Expanded(child: _stage()),
-            if (_live != null) _compromisePanel(_live!),
-            _stats(),
-            _endButton(),
-            const SizedBox(height: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _title(),
+                if (_live != null) _statusBar(_live!),
+                _guidance(),
+                Expanded(child: _stage()),
+                if (_live != null) _compromisePanel(_live!),
+                _stats(),
+                _endButton(),
+                const SizedBox(height: 8),
+              ],
+            ),
+            if (_live?.timeOutActive ?? false) _timeOutOverlay(),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _timeOutOverlay() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _ping,
+          builder: (context, _) {
+            final pulse = (math.sin(_ping.value * math.pi * 2) + 1) / 2;
+            final eased = Curves.easeInOut.transform(pulse);
+
+            return Semantics(
+              liveRegion: true,
+              label:
+                  'Time out. Voices are too loud. Lower voices to stop the whistle.',
+              child: ColoredBox(
+                color: RefPalette.red.withValues(alpha: 0.12 + eased * 0.2),
+                child: Center(
+                  child: Transform.scale(
+                    scale: 1 + eased * 0.045,
+                    child: Container(
+                      width: math.min(
+                        420.0,
+                        MediaQuery.sizeOf(context).width - 44,
+                      ),
+                      margin: const EdgeInsets.all(22),
+                      padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
+                      decoration: BoxDecoration(
+                        color: RefPalette.red.withValues(
+                          alpha: 0.86 + eased * 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: RefPalette.cream.withValues(alpha: 0.78),
+                          width: 3,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: RefPalette.red.withValues(alpha: 0.42),
+                            blurRadius: 32 + eased * 16,
+                            spreadRadius: 4 + eased * 8,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.front_hand_rounded,
+                            size: 44,
+                            color: RefPalette.cream.withValues(alpha: 0.96),
+                          ),
+                          const SizedBox(height: 12),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'TIME OUT',
+                              maxLines: 1,
+                              style: zilla(
+                                size: 58,
+                                weight: FontWeight.w700,
+                                color: RefPalette.cream,
+                                height: 0.92,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Lower voices to stop the whistle.',
+                            textAlign: TextAlign.center,
+                            style: mulish(
+                              size: 16,
+                              weight: FontWeight.w900,
+                              color: RefPalette.cream.withValues(alpha: 0.92),
+                              height: 1.15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -455,7 +549,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: RefHaptics.wrap(
-            () => _showCompromiseDetails(suggestion),
+            () => unawaited(_showCompromiseDetails(suggestion)),
             haptic: RefHaptic.selection,
           ),
           borderRadius: BorderRadius.circular(14),
@@ -555,52 +649,54 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     return math.min(292.0, math.max(226.0, screenHeight * 0.34));
   }
 
-  void _showCompromiseDetails(CompromiseSuggestion suggestion) {
+  Future<void> _showCompromiseDetails(CompromiseSuggestion suggestion) async {
     _compromiseSetClicked = true;
     _compromiseAutoCollapseTimer?.cancel();
+    final compromiseSetKey = _visibleCompromiseSetKey;
     final color = _compromiseColor(suggestion);
     final label = _compromiseLabel(suggestion);
 
-    unawaited(
-      showGeneralDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        barrierLabel: 'Close compromise details',
-        barrierColor: RefPalette.ink.withValues(alpha: 0.34),
-        transitionDuration: const Duration(milliseconds: 220),
-        pageBuilder: (dialogContext, _, _) {
-          final height = MediaQuery.sizeOf(dialogContext).height;
-          return SafeArea(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(22),
-                child: _CompromiseDetailsModal(
-                  suggestion: suggestion,
-                  color: color,
-                  label: label,
-                  maxHeight: math.max(260, height - 44),
-                  onClose: () => Navigator.of(dialogContext).pop(),
-                ),
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close compromise details',
+      barrierColor: RefPalette.ink.withValues(alpha: 0.34),
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (dialogContext, _, _) {
+        final height = MediaQuery.sizeOf(dialogContext).height;
+        return SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: _CompromiseDetailsModal(
+                suggestion: suggestion,
+                color: color,
+                label: label,
+                maxHeight: math.max(260, height - 44),
+                onClose: () => Navigator.of(dialogContext).pop(),
               ),
             ),
-          );
-        },
-        transitionBuilder: (context, animation, secondaryAnimation, child) {
-          final eased = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
-          );
-          return FadeTransition(
-            opacity: eased,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.96, end: 1).animate(eased),
-              child: child,
-            ),
-          );
-        },
-      ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final eased = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: eased,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.96, end: 1).animate(eased),
+            child: child,
+          ),
+        );
+      },
     );
+
+    if (!mounted || compromiseSetKey != _visibleCompromiseSetKey) return;
+    setState(() => _compromisePanelExpanded = false);
   }
 
   Color _compromiseColor(CompromiseSuggestion suggestion) {

@@ -69,7 +69,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Add the referee whistle at assets/audio/referee_whistle.mp3.
+  # Add referee sounds at assets/audio/referee_whistle.mp3 and
+  # assets/audio/long_white.mp3.
   assets:
     - assets/audio/
 

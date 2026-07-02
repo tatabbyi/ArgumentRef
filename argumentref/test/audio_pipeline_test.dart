@@ -417,6 +417,84 @@ void main() {
       expect(tone.hasAiSignal, isTrue);
       expect(tone.speaker, Speaker.left);
     });
+
+    test(
+      'starts time out after both speakers stay very loud for six seconds',
+      () {
+        var now = DateTime.utc(2026, 7, 2, 12);
+        final timeOutSound = _FakeTimeOutSoundPlayer();
+        final c = LiveRefController(
+          leftName: 'Ada',
+          rightName: 'Ben',
+          sessionId: 'test-session',
+          participantId: 'test-participant',
+          timeOutSoundPlayer: timeOutSound,
+          now: () => now,
+        );
+        addTearDown(c.dispose);
+
+        c.onEventForTest(
+          const TranscriptEvent(
+            isFinal: false,
+            speaker: 'speaker_0',
+            text: 'you are not hearing me',
+          ),
+        );
+        c.onEventForTest(
+          const TranscriptEvent(
+            isFinal: false,
+            speaker: 'speaker_1',
+            text: 'no, you are not hearing me',
+          ),
+        );
+        c.session.loudnessListenable.value = 0.9;
+
+        now = now.add(const Duration(milliseconds: 5900));
+        c.onEventForTest(const UnknownEvent('tick'));
+        expect(c.timeOutActive, isFalse);
+        expect(timeOutSound.startCount, 0);
+
+        now = now.add(const Duration(milliseconds: 101));
+        c.onEventForTest(const UnknownEvent('tick'));
+        expect(c.timeOutActive, isTrue);
+        expect(c.beat.caption, 'Time out - lower the volume');
+        expect(timeOutSound.startCount, 1);
+        expect(timeOutSound.looping, isTrue);
+
+        c.session.loudnessListenable.value = 0.4;
+        expect(c.timeOutActive, isFalse);
+        expect(timeOutSound.stopCount, 1);
+        expect(timeOutSound.looping, isFalse);
+      },
+    );
+
+    test('does not time out for one loud speaker', () {
+      var now = DateTime.utc(2026, 7, 2, 12);
+      final timeOutSound = _FakeTimeOutSoundPlayer();
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+        timeOutSoundPlayer: timeOutSound,
+        now: () => now,
+      );
+      addTearDown(c.dispose);
+
+      c.onEventForTest(
+        const TranscriptEvent(
+          isFinal: false,
+          speaker: 'speaker_0',
+          text: 'this is very loud but only one side',
+        ),
+      );
+      c.session.loudnessListenable.value = 0.9;
+      now = now.add(const Duration(seconds: 7));
+      c.onEventForTest(const UnknownEvent('tick'));
+
+      expect(c.timeOutActive, isFalse);
+      expect(timeOutSound.startCount, 0);
+    });
   });
 
   group('LiveRefController voice', () {
@@ -472,9 +550,18 @@ void main() {
       ],
     );
 
-    test('reads a real intervention aloud, naming the person', () {
+    test('speaks a cut-in flag promptly, without waiting for a lull', () {
       final voice = _FakeRefVoice();
-      final c = controllerWith(voice);
+      // Production cooldown/settle (no overrides): a cut-in still speaks right
+      // away — that's the moment a ref actually raises their voice.
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+        voice: voice,
+      );
+      c.voiceEnabled = true;
       addTearDown(c.dispose);
 
       c.onEventForTest(cutIn);
@@ -501,13 +588,30 @@ void main() {
       expect(voice.spoken, isEmpty);
     });
 
-    test('waits for a natural break before speaking', () {
+    test('announces a compromise once the floor is quiet', () {
       final voice = _FakeRefVoice();
-      // A long settle means the floor was just active, so the ref holds its call.
+      final c = controllerWith(voice); // no one holds the floor → a lull
+      addTearDown(c.dispose);
+
+      c.onEventForTest(compromise);
+
+      expect(voice.spoken, ['Try this deal now: Two-week trial']);
+    });
+
+    test('holds a compromise back while someone still holds the floor', () {
+      final voice = _FakeRefVoice();
+      // A long settle means the just-active floor still counts as "busy".
       final c = controllerWith(voice, settle: const Duration(seconds: 30));
       addTearDown(c.dispose);
 
-      c.onEventForTest(cutIn);
+      c.onEventForTest(
+        const TranscriptEvent(
+          isFinal: true,
+          speaker: 'speaker_0',
+          text: 'I really think we should settle this right now',
+        ),
+      );
+      c.onEventForTest(compromise); // floor still active → not announced yet
 
       expect(voice.spoken, isEmpty);
     });
@@ -572,6 +676,29 @@ class _FakeCompromiseSoundPlayer implements CompromiseSoundPlayer {
   @override
   Future<void> playCompromiseFound() {
     playCount++;
+    return Future.value();
+  }
+
+  @override
+  Future<void> dispose() => Future.value();
+}
+
+class _FakeTimeOutSoundPlayer implements TimeOutSoundPlayer {
+  int startCount = 0;
+  int stopCount = 0;
+  bool looping = false;
+
+  @override
+  Future<void> startTimeOutLoop() {
+    startCount++;
+    looping = true;
+    return Future.value();
+  }
+
+  @override
+  Future<void> stopTimeOutLoop() {
+    stopCount++;
+    looping = false;
     return Future.value();
   }
 

@@ -34,6 +34,7 @@ import {
 import { RefereeInterventionEngine } from '../interventions/refereeInterventionEngine.js';
 import { ArgumentRater } from '../ratings/argumentRater.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
+import { PcmPitchTracker } from '../speakers/voicePitch.js';
 import { InterruptionDetector } from '../interruptions/interruptionDetector.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
@@ -270,6 +271,7 @@ async function handleAudioConnection(
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const audio = audioFormatFromUrl(url);
+  const pitchTracker = new PcmPitchTracker(audio);
   const refereeSettings = parseRefereeSettingsFromUrl(url);
   const recorder = await sessionStore.createAudioStream({
     sessionId: optionalQuery(url, 'sessionId'),
@@ -334,7 +336,9 @@ async function handleAudioConnection(
   });
   const emitEvent = (event: ServerEvent) => {
     if (event.type === 'transcript.partial' || event.type === 'transcript.final') {
-      const labelled = speakerLabeler.labelTranscript(event);
+      const labelled = speakerLabeler.labelTranscript(event, {
+        pitchHz: pitchTracker.pitchForSegment(event.startMs, event.endMs),
+      });
       if (labelled.mapping) {
         emitClientEvent(labelled.mapping);
       }
@@ -412,6 +416,9 @@ async function handleAudioConnection(
       recorder,
       transcriber,
       refereeSettings,
+      pitchTracker,
+      speakerLabeler,
+      emitEvent,
       () => finishConnection(true),
       data,
       isBinary,
@@ -432,6 +439,9 @@ async function handleMessage(
   recorder: AudioStreamRecorder,
   transcriber: Transcriber,
   refereeSettings: RefereeSettings,
+  pitchTracker: PcmPitchTracker,
+  speakerLabeler: SpeakerLabeler,
+  emitEvent: (event: ServerEvent) => void,
   endSession: () => Promise<void>,
   data: WebSocket.RawData,
   isBinary: boolean,
@@ -439,6 +449,7 @@ async function handleMessage(
   try {
     if (isBinary) {
       const audioChunk = rawDataToBuffer(data);
+      pitchTracker.ingest(audioChunk);
       transcriber.sendAudio(audioChunk);
       const snapshot = await recorder.writeChunk(audioChunk);
       sendEvent(webSocket, {
@@ -455,6 +466,9 @@ async function handleMessage(
       webSocket,
       recorder,
       refereeSettings,
+      pitchTracker,
+      speakerLabeler,
+      emitEvent,
       endSession,
       data.toString('utf8'),
     );
@@ -467,6 +481,9 @@ async function handleControlMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
   refereeSettings: RefereeSettings,
+  pitchTracker: PcmPitchTracker,
+  speakerLabeler: SpeakerLabeler,
+  emitEvent: (event: ServerEvent) => void,
   endSession: () => Promise<void>,
   payload: string,
 ): Promise<void> {
@@ -488,6 +505,24 @@ async function handleControlMessage(
       await recorder.writeMetadata('open');
       sendAudioCommitted(webSocket, recorder);
       return;
+    case 'speaker.calibration.start':
+      pitchTracker.startCalibration(message.speakerLabel);
+      return;
+    case 'speaker.calibration.stop': {
+      const profile = pitchTracker.stopCalibration(message.speakerLabel);
+      if (profile) {
+        speakerLabeler.recordVoiceProfile(profile);
+        emitEvent({
+          type: 'speaker.mapped',
+          sessionId: recorder.sessionId,
+          streamId: recorder.streamId,
+          speaker: 'speaker_unknown',
+          speakerLabel: profile.label,
+          source: 'pitch_calibration',
+        });
+      }
+      return;
+    }
     case 'session.stop':
       await endSession();
       return;

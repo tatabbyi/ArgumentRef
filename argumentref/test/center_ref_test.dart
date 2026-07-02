@@ -219,6 +219,58 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
+    testWidgets('shows timeout overlay until the room quiets down', (
+      tester,
+    ) async {
+      var now = DateTime.utc(2026, 7, 2, 12);
+      final controller = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        session: _QuietAudioSession(),
+        now: () => now,
+      );
+      controller.onEventForTest(
+        const TranscriptEvent(
+          isFinal: false,
+          speaker: 'speaker_0',
+          text: 'you are not hearing me',
+        ),
+      );
+      controller.onEventForTest(
+        const TranscriptEvent(
+          isFinal: false,
+          speaker: 'speaker_1',
+          text: 'no, you are not hearing me',
+        ),
+      );
+      controller.session.loudnessListenable.value = 0.9;
+      now = now.add(const Duration(seconds: 7));
+      controller.onEventForTest(const UnknownEvent('tick'));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CenterRefScreen(
+              leftName: 'Ada',
+              rightName: 'Ben',
+              liveController: controller,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('TIME OUT'), findsOneWidget);
+      expect(find.text('Lower voices to stop the whistle.'), findsOneWidget);
+
+      controller.session.loudnessListenable.value = 0.4;
+      await tester.pump();
+
+      expect(find.text('TIME OUT'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
     testWidgets('opens compromise details from a tapped card', (tester) async {
       final controller = LiveRefController(
         leftName: 'Ada',
@@ -274,7 +326,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('WHY IT COULD WORK'), findsNothing);
-      await tester.pump(const Duration(seconds: 5));
+      expect(find.text('Compromises ready - tap to view'), findsOneWidget);
+      expect(find.text('Two-week trial'), findsNothing);
+
+      await tester.tap(find.text('Compromises ready - tap to view'));
+      await tester.pump();
+
       expect(find.text('Two-week trial'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());

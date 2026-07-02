@@ -98,9 +98,11 @@ class LiveRefController extends ChangeNotifier {
     String? sessionId,
     String? participantId,
     CompromiseSoundPlayer? compromiseSoundPlayer,
+    TimeOutSoundPlayer? timeOutSoundPlayer,
     RefVoice? voice,
     Duration? voiceCooldown,
     Duration? voiceSettle,
+    DateTime Function()? now,
   }) : session =
            session ??
            AudioSession(
@@ -110,9 +112,12 @@ class LiveRefController extends ChangeNotifier {
            ),
        _compromiseSoundPlayer =
            compromiseSoundPlayer ?? const SilentCompromiseSoundPlayer(),
+       _timeOutSoundPlayer =
+           timeOutSoundPlayer ?? const SilentTimeOutSoundPlayer(),
        _voice = voice ?? const SilentRefVoice(),
        _voiceCooldown = voiceCooldown ?? const Duration(seconds: 7),
-       _voiceSettle = voiceSettle ?? const Duration(milliseconds: 1400) {
+       _voiceSettle = voiceSettle ?? const Duration(milliseconds: 1400),
+       _now = now ?? DateTime.now {
     this.session.loudnessListenable.addListener(_onLoudnessChanged);
   }
 
@@ -120,7 +125,9 @@ class LiveRefController extends ChangeNotifier {
   final String rightName;
   final AudioSession session;
   final CompromiseSoundPlayer _compromiseSoundPlayer;
+  final TimeOutSoundPlayer _timeOutSoundPlayer;
   final RefVoice _voice;
+  final DateTime Function() _now;
 
   /// Minimum gap between two spoken referee calls, so the ref never rattles off
   /// guidance back-to-back.
@@ -140,6 +147,10 @@ class LiveRefController extends ChangeNotifier {
   static const int _cutInWindowMs = 800; // overlap tight enough to be a cut-in
   static const int _concernHoldMs = 2600; // how long the ref stays flagged
   static const int _maxLines = 60;
+  static const double _shoutingStartLoudness = 0.82;
+  static const double _shoutingStopLoudness = 0.56;
+  static const Duration _timeOutTriggerDuration = Duration(seconds: 6);
+  static const Duration _twoSpeakerShoutingWindow = Duration(seconds: 8);
 
   StreamSubscription<RefEvent>? _eventSub;
   Timer? _tick;
@@ -154,10 +165,14 @@ class LiveRefController extends ChangeNotifier {
   DateTime _lastActivityAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _concernUntil = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _ignoreConversationUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastLeftHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastRightHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _shoutingStartedAt;
   bool _hasHeardAnything = false;
 
   bool _idle = true;
   bool _concerned = false;
+  bool _timeOutActive = false;
 
   int _leftWeight = 0;
   int _rightWeight = 0;
@@ -190,6 +205,15 @@ class LiveRefController extends ChangeNotifier {
   /// The current referee "beat" — active speaker + mood + mouth + a coaching
   /// caption (with `{L}` / `{R}` tokens the screen fills in).
   Beat get beat {
+    if (_timeOutActive) {
+      return Beat(
+        active: _idle ? Speaker.none : _activeSpeaker,
+        mood: Mood.alert,
+        mouth: MouthShape.tense,
+        caption: 'Time out - lower the volume',
+      );
+    }
+
     final pushed = topCompromise;
     if (pushed != null && pushed.shouldPushHard) {
       return Beat(
@@ -242,6 +266,8 @@ class LiveRefController extends ChangeNotifier {
 
   CompromiseSuggestion? get topCompromise =>
       _compromises.isEmpty ? null : _compromises.first;
+
+  bool get timeOutActive => _timeOutActive;
 
   RoomToneStatus get roomTone {
     final loudness = session.loudnessLevel;
@@ -369,7 +395,11 @@ class LiveRefController extends ChangeNotifier {
     _refresh();
   }
 
-  Future<void> stop() => session.stop();
+  Future<void> stop() {
+    _setTimeOutActive(false);
+    _shoutingStartedAt = null;
+    return session.stop();
+  }
 
   /// Clears the visible conversation state while keeping the live socket and
   /// any backend speaker mappings learned during calibration.
@@ -379,11 +409,15 @@ class LiveRefController extends ChangeNotifier {
     _concernUntil = DateTime.fromMillisecondsSinceEpoch(0);
     _ignoreConversationUntil =
         ignoreIncoming > Duration.zero
-            ? DateTime.now().add(ignoreIncoming)
+            ? _now().add(ignoreIncoming)
             : DateTime.fromMillisecondsSinceEpoch(0);
+    _lastLeftHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _lastRightHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _shoutingStartedAt = null;
     _hasHeardAnything = false;
     _idle = true;
     _concerned = false;
+    _setTimeOutActive(false);
     _leftWeight = 0;
     _rightWeight = 0;
     _cutIns = 0;
@@ -416,7 +450,9 @@ class LiveRefController extends ChangeNotifier {
     // Detach before the session disposes its notifier.
     session.statusListenable.removeListener(_onStatusChanged);
     session.loudnessListenable.removeListener(_onLoudnessChanged);
+    _setTimeOutActive(false);
     unawaited(_compromiseSoundPlayer.dispose());
+    unawaited(_timeOutSoundPlayer.dispose());
     unawaited(_voice.dispose());
     unawaited(session.dispose());
     super.dispose();
@@ -466,12 +502,13 @@ class LiveRefController extends ChangeNotifier {
   }
 
   void _handleTranscript(TranscriptEvent event) {
-    final now = DateTime.now();
+    final now = _now();
     final speaker = _resolveSpeaker(
       event.speaker,
       speakerLabel: event.speakerLabel,
     );
     if (now.isBefore(_ignoreConversationUntil)) return;
+    _markSpeakerHeard(speaker, now);
 
     // Keep the ref's face reactive while the backend does the actual timed,
     // directional interruption detection.
@@ -499,7 +536,7 @@ class LiveRefController extends ChangeNotifier {
   }
 
   void _handleInterruption(InterruptionDetectedEvent event) {
-    final now = DateTime.now();
+    final now = _now();
     if (now.isBefore(_ignoreConversationUntil)) return;
 
     final interrupter = _resolveSpeaker(
@@ -515,6 +552,8 @@ class LiveRefController extends ChangeNotifier {
         interrupter == interrupted) {
       return;
     }
+    _markSpeakerHeard(interrupter, now);
+    _markSpeakerHeard(interrupted, now);
 
     if (interrupter == Speaker.left && interrupted == Speaker.right) {
       _leftCutRight++;
@@ -575,6 +614,11 @@ class LiveRefController extends ChangeNotifier {
     final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
     if (speaker == Speaker.left) _leftWeight += words;
     if (speaker == Speaker.right) _rightWeight += words;
+  }
+
+  void _markSpeakerHeard(Speaker speaker, DateTime at) {
+    if (speaker == Speaker.left) _lastLeftHeardAt = at;
+    if (speaker == Speaker.right) _lastRightHeardAt = at;
   }
 
   void _handleSpeakerMapped(SpeakerMappedEvent event) {
@@ -644,11 +688,12 @@ class LiveRefController extends ChangeNotifier {
   /// user-visible actually changed.
   void _refresh() {
     if (_disposed) return;
-    final now = DateTime.now();
+    final now = _now();
     _idle =
         !_hasHeardAnything ||
         now.difference(_lastActivityAt).inMilliseconds > _idleGapMs;
     _concerned = now.isBefore(_concernUntil);
+    _updateTimeOutState(now);
 
     // Runs every tick (not just on signature changes) so a call held back for a
     // lull actually gets spoken once the natural break arrives.
@@ -669,7 +714,7 @@ class LiveRefController extends ChangeNotifier {
         '${top?.id}:${top?.score}|$_compromisesDisabled|$_compromiseError|'
         '${tone?.lineNumber}.${tone?.sentenceIndex}:${tone?.dominantTone}:'
         '${tone?.intensity}:$_roomToneSpeaker|$_roomToneDisabled|$_roomToneError|'
-        '$loudnessBucket';
+        '$loudnessBucket|$_timeOutActive';
     if (sig == _signature) return;
     _signature = sig;
     notifyListeners();
@@ -691,6 +736,7 @@ class LiveRefController extends ChangeNotifier {
   ///   rattles off guidance back-to-back.
   void _maybeVoiceCaption() {
     if (!voiceEnabled) return;
+    if (_timeOutActive) return;
 
     final current = beat;
     if (!_isVoiceableMood(current.mood)) return;
@@ -700,7 +746,7 @@ class LiveRefController extends ChangeNotifier {
         .replaceAll('{R}', rightName);
     if (spoken.isEmpty) return;
 
-    final now = DateTime.now();
+    final now = _now();
     if (now.difference(_lastVoicedAt) < _voiceCooldown) return;
 
     if (current.mood == Mood.concern) {
@@ -727,6 +773,45 @@ class LiveRefController extends ChangeNotifier {
   /// filler) is shown but not read aloud.
   static bool _isVoiceableMood(Mood mood) =>
       mood == Mood.concern || mood == Mood.alert || mood == Mood.approve;
+
+  void _updateTimeOutState(DateTime now) {
+    final loudness = session.loudnessLevel;
+    if (_timeOutActive) {
+      if (loudness < _shoutingStopLoudness) {
+        _shoutingStartedAt = null;
+        _setTimeOutActive(false);
+      }
+      return;
+    }
+
+    if (loudness < _shoutingStartLoudness || !_bothSpeakersRecent(now)) {
+      _shoutingStartedAt = null;
+      return;
+    }
+
+    _shoutingStartedAt ??= now;
+    if (now.difference(_shoutingStartedAt!) >= _timeOutTriggerDuration) {
+      _setTimeOutActive(true);
+    }
+  }
+
+  bool _bothSpeakersRecent(DateTime now) {
+    final leftRecent =
+        now.difference(_lastLeftHeardAt) <= _twoSpeakerShoutingWindow;
+    final rightRecent =
+        now.difference(_lastRightHeardAt) <= _twoSpeakerShoutingWindow;
+    return leftRecent && rightRecent;
+  }
+
+  void _setTimeOutActive(bool active) {
+    if (_timeOutActive == active) return;
+    _timeOutActive = active;
+    if (active) {
+      unawaited(_timeOutSoundPlayer.startTimeOutLoop());
+    } else {
+      unawaited(_timeOutSoundPlayer.stopTimeOutLoop());
+    }
+  }
 
   static String _generateId(String prefix) {
     final ts = DateTime.now().microsecondsSinceEpoch;

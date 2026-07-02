@@ -73,7 +73,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
             // Hitting the ceiling ends the read too — the fallback when nobody taps
             // and the backend never matches the voice.
             if (s == AnimationStatus.completed) {
-              setState(() => _status[_index] = _CalStatus.done);
+              _completeRead();
             }
           })
           ..addListener(_maybeAutoFinish);
@@ -125,6 +125,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
       leftName: widget.leftName,
       rightName: widget.rightName,
       compromiseSoundPlayer: RefereeWhistlePlayer(),
+      timeOutSoundPlayer: LongWhiteTimeOutPlayer(),
       // Attached now but left muted (voiceEnabled defaults to false) so the ref
       // stays quiet during calibration; the conversation screen turns it on
       // once this controller is handed off in _finish().
@@ -167,6 +168,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
   void _beginRead() {
     if (!mounted || _current != _CalStatus.preparing) return;
     setState(() => _status[_index] = _CalStatus.recording);
+    _live?.session.startSpeakerCalibration(_name);
     _read.forward(from: 0);
   }
 
@@ -177,6 +179,7 @@ class _CalibrationScreenState extends State<CalibrationScreen>
   void _completeRead() {
     if (_current != _CalStatus.recording) return;
     _read.stop();
+    _live?.session.stopSpeakerCalibration(_name);
     setState(() => _status[_index] = _CalStatus.done);
   }
 

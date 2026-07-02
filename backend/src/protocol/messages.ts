@@ -21,6 +21,14 @@ export const clientControlMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('audio.commit'),
   }),
   z.object({
+    type: z.literal('speaker.calibration.start'),
+    speakerLabel: z.string().trim().min(1).max(120),
+  }),
+  z.object({
+    type: z.literal('speaker.calibration.stop'),
+    speakerLabel: z.string().trim().min(1).max(120).optional(),
+  }),
+  z.object({
     type: z.literal('session.stop'),
   }),
 ]);
@@ -354,7 +362,7 @@ export interface SpeakerMappedEvent {
   streamId: string;
   speaker: string;
   speakerLabel: string;
-  source: 'query_calibration';
+  source: 'query_calibration' | 'pitch_calibration';
 }
 
 export type FactCheckStatus = 'matched_fact_check' | 'no_match';

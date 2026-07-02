@@ -187,6 +187,21 @@ class AudioSession {
     }
   }
 
+  /// Marks the following microphone bytes as this speaker's calibration read.
+  void startSpeakerCalibration(String speakerLabel) {
+    final label = speakerLabel.trim();
+    if (label.isEmpty) return;
+    _sendControl({'type': 'speaker.calibration.start', 'speakerLabel': label});
+  }
+
+  /// Commits the current calibration read so the backend can build a voice
+  /// profile from the captured pitch samples.
+  void stopSpeakerCalibration(String speakerLabel) {
+    final label = speakerLabel.trim();
+    if (label.isEmpty) return;
+    _sendControl({'type': 'speaker.calibration.stop', 'speakerLabel': label});
+  }
+
   /// Releases the recorder and all stream resources. Call once when done.
   Future<void> dispose() async {
     await stop();

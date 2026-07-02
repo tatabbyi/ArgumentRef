@@ -144,6 +144,7 @@ describe('audio ingestion websocket', () => {
       googleFactCheckPageSize: 3,
       factCheckMaxClaimsPerSession: 5,
       geminiModel: 'gemini-3.5-flash',
+      roomToneGeminiModel: 'gemini-3.1-flash-lite',
       compromiseInitialDelayMs: 60_000,
       compromiseIntervalMs: 30_000,
       fallacyDetectionEnabled: false,
@@ -223,6 +224,38 @@ describe('audio ingestion websocket', () => {
     socket.send(JSON.stringify({ type: 'session.stop' }));
     await waitForEvent(socket, 'session.ended');
   });
+
+  it('captures a pitch calibration profile from PCM16 audio', async () => {
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${port}/v1/audio?sessionId=pitch-session&participantId=phone-1&encoding=pcm16&sampleRateHz=16000&channels=1&speakerLabels=Ada,Ben`,
+    );
+
+    await waitForEvent(socket, 'session.started');
+
+    socket.send(
+      JSON.stringify({
+        type: 'speaker.calibration.start',
+        speakerLabel: 'Ada',
+      }),
+    );
+    for (let i = 0; i < 5; i++) {
+      socket.send(sinePcm16(180, 0.1));
+    }
+    socket.send(
+      JSON.stringify({
+        type: 'speaker.calibration.stop',
+        speakerLabel: 'Ada',
+      }),
+    );
+
+    const mapped = await waitForEvent(socket, 'speaker.mapped');
+    expect(mapped.speaker).toBe('speaker_unknown');
+    expect(mapped.speakerLabel).toBe('Ada');
+    expect(mapped.source).toBe('pitch_calibration');
+
+    socket.send(JSON.stringify({ type: 'session.stop' }));
+    await waitForEvent(socket, 'session.ended');
+  });
 });
 
 function waitForEvent<TType extends ServerEvent['type']>(
@@ -266,4 +299,17 @@ function fetchTarget(input: Parameters<typeof fetch>[0]): string {
   }
 
   return typeof input === 'string' ? input : input.url;
+}
+
+function sinePcm16(frequencyHz: number, durationSeconds: number): Buffer {
+  const sampleRateHz = 16000;
+  const sampleCount = Math.floor(sampleRateHz * durationSeconds);
+  const buffer = Buffer.alloc(sampleCount * 2);
+
+  for (let i = 0; i < sampleCount; i++) {
+    const value = Math.sin((2 * Math.PI * frequencyHz * i) / sampleRateHz);
+    buffer.writeInt16LE(Math.round(value * 12000), i * 2);
+  }
+
+  return buffer;
 }

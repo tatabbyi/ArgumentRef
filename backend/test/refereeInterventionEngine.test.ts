@@ -226,6 +226,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     googleFactCheckPageSize: 3,
     factCheckMaxClaimsPerSession: 5,
     geminiModel: 'gemini-3.5-flash',
+    roomToneGeminiModel: 'gemini-3.1-flash-lite',
     compromiseInitialDelayMs: 60_000,
     compromiseIntervalMs: 30_000,
     fallacyDetectionEnabled: false,
