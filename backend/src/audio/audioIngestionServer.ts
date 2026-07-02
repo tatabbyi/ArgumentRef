@@ -8,8 +8,10 @@ import {
   parseClientControlMessage,
   serializeServerEvent,
   type AudioFormat,
+  type RefereeSettings,
   type ServerEvent,
 } from '../protocol/messages.js';
+import { parseRefereeSettingsFromUrl } from '../referee/refereeSettings.js';
 import { SessionStore, type AudioStreamRecorder } from '../sessions/sessionStore.js';
 import {
   createDeepgramTranscriber,
@@ -215,6 +217,7 @@ async function handleAudioConnection(
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const audio = audioFormatFromUrl(url);
+  const refereeSettings = parseRefereeSettingsFromUrl(url);
   const recorder = await sessionStore.createAudioStream({
     sessionId: optionalQuery(url, 'sessionId'),
     participantId: optionalQuery(url, 'participantId'),
@@ -222,7 +225,10 @@ async function handleAudioConnection(
   });
   const claimDetector = new ClaimDetector();
   const factCheckService = createFactCheckService(config);
-  const interventionEngine = new RefereeInterventionEngine({ config });
+  const interventionEngine = new RefereeInterventionEngine({
+    config,
+    settings: refereeSettings,
+  });
   const sendAndRecordClientEvent = (event: ServerEvent) => {
     sendEvent(webSocket, event);
     recordHistoryEvent(historyStore, event);
@@ -300,6 +306,7 @@ async function handleAudioConnection(
     participantId: recorder.participantId,
     audio,
     acceptedBinaryAudio: true,
+    refereeSettings,
   });
   compromiseAdvisor.start();
   fallacyDetector.start();
@@ -335,6 +342,7 @@ async function handleAudioConnection(
       webSocket,
       recorder,
       transcriber,
+      refereeSettings,
       () => finishConnection(true),
       data,
       isBinary,
@@ -354,6 +362,7 @@ async function handleMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
   transcriber: Transcriber,
+  refereeSettings: RefereeSettings,
   endSession: () => Promise<void>,
   data: WebSocket.RawData,
   isBinary: boolean,
@@ -376,6 +385,7 @@ async function handleMessage(
     await handleControlMessage(
       webSocket,
       recorder,
+      refereeSettings,
       endSession,
       data.toString('utf8'),
     );
@@ -387,6 +397,7 @@ async function handleMessage(
 async function handleControlMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
+  refereeSettings: RefereeSettings,
   endSession: () => Promise<void>,
   payload: string,
 ): Promise<void> {
@@ -401,6 +412,7 @@ async function handleControlMessage(
         participantId: recorder.participantId,
         audio: message.audio ?? DEFAULT_AUDIO,
         acceptedBinaryAudio: true,
+        refereeSettings,
       });
       return;
     case 'audio.commit':

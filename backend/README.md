@@ -217,6 +217,20 @@ The mobile WebSocket endpoint is the same URL with `https` changed to `wss` and 
 wss://argumentref-backend.onrender.com/v1/audio
 ```
 
+Optional private referee settings can be added as query parameters:
+
+```text
+wss://argumentref-backend.onrender.com/v1/audio?interventionStyle=gentle&fallacySensitivity=medium&factCheckStrictness=high&compromisePreference=balanced&interventionFrequency=normal
+```
+
+Supported values:
+
+- `interventionStyle`: `gentle`, `balanced`, `direct`
+- `fallacySensitivity`: `low`, `medium`, `high`
+- `factCheckStrictness`: `low`, `medium`, `high`
+- `compromisePreference`: `balanced`, `practical`, `fair`
+- `interventionFrequency`: `low`, `normal`, `high`
+
 The user does not type this URL into the mobile app. The frontend team should put it in app configuration, for example:
 
 ```sh
@@ -270,6 +284,8 @@ When `DATABASE_URL` is configured, the backend creates these tables automaticall
 - `referee_interventions`
 - `compromise_suggestions`
 - `speaker_mappings`
+
+Referee settings are stored on each `history_streams` row as `referee_settings`.
 
 ## History API
 
@@ -483,6 +499,29 @@ for the argument process:
 This rates the conversation quality, not which person is right. It is intended as
 live guidance for the referee UI.
 
+## Test Private Referee Settings
+
+Private referee settings are per-session WebSocket options. They do not need a
+new Render secret and they are returned on `session.started`:
+
+```json
+{
+  "type": "session.started",
+  "refereeSettings": {
+    "interventionStyle": "gentle",
+    "fallacySensitivity": "medium",
+    "factCheckStrictness": "high",
+    "compromisePreference": "balanced",
+    "interventionFrequency": "normal"
+  }
+}
+```
+
+They adjust only backend referee behavior. For example, `interventionStyle=gentle`
+softens intervention wording, `factCheckStrictness=high` prompts earlier on
+factual claims, and `interventionFrequency=low` reduces rating prompts and
+increases cooldowns.
+
 ## Test Referee Intervention Events
 
 Referee interventions do not need another API key. They convert existing backend
@@ -507,4 +546,4 @@ detections, compromise suggestions, and low argument ratings. It uses
 
 ## Next Step
 
-The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, and turns those signals into referee intervention suggestions. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, and history data from the backend.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, supports private referee settings, and turns those signals into referee intervention suggestions. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, settings, and history data from the backend.

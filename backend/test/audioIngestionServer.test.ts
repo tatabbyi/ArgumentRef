@@ -54,6 +54,13 @@ describe('audio ingestion websocket', () => {
     const started = await waitForEvent(socket, 'session.started');
     expect(started.sessionId).toBe('test-session');
     expect(started.participantId).toBe('phone-1');
+    expect(started.refereeSettings).toMatchObject({
+      interventionStyle: 'balanced',
+      fallacySensitivity: 'medium',
+      factCheckStrictness: 'medium',
+      compromisePreference: 'balanced',
+      interventionFrequency: 'normal',
+    });
 
     socket.send(Buffer.from([1, 2, 3, 4]));
 
@@ -99,6 +106,24 @@ describe('audio ingestion websocket', () => {
 
     expect(response.status).toBe(503);
     expect(body.error).toBe('history_disabled');
+  });
+
+  it('accepts private referee settings from the websocket URL', async () => {
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${port}/v1/audio?sessionId=settings-session&participantId=phone-1&interventionStyle=direct&fallacySensitivity=low&factCheckStrictness=high&compromisePreference=fair&interventionFrequency=high`,
+    );
+
+    const started = await waitForEvent(socket, 'session.started');
+    expect(started.refereeSettings).toEqual({
+      interventionStyle: 'direct',
+      fallacySensitivity: 'low',
+      factCheckStrictness: 'high',
+      compromisePreference: 'fair',
+      interventionFrequency: 'high',
+    });
+
+    socket.send(JSON.stringify({ type: 'session.stop' }));
+    await waitForEvent(socket, 'session.ended');
   });
 });
 

@@ -15,6 +15,7 @@ import type {
   SpeakerMappedEvent,
   TranscriptFinalEvent,
 } from '../protocol/messages.js';
+import { withDefaultRefereeSettings } from '../referee/refereeSettings.js';
 
 type HistoryEvent =
   | Extract<ServerEvent, { type: 'session.started' }>
@@ -81,6 +82,7 @@ export interface HistoryStreamSummary {
   debriefStoragePath?: string;
   profileStoragePath?: string;
   debriefStatus?: string;
+  refereeSettings: unknown;
 }
 
 export interface HistorySpeakerMapping {
@@ -470,8 +472,12 @@ class PostgresHistoryStore implements HistoryStore {
         storage_path TEXT,
         debrief_storage_path TEXT,
         profile_storage_path TEXT,
-        debrief_status TEXT
+        debrief_status TEXT,
+        referee_settings JSONB NOT NULL DEFAULT '{}'::jsonb
       );
+
+      ALTER TABLE history_streams
+        ADD COLUMN IF NOT EXISTS referee_settings JSONB NOT NULL DEFAULT '{}'::jsonb;
 
       CREATE TABLE IF NOT EXISTS history_events (
         id BIGSERIAL PRIMARY KEY,
@@ -704,19 +710,22 @@ class PostgresHistoryStore implements HistoryStore {
           session_id,
           participant_id,
           audio_format,
+          referee_settings,
           started_at
         )
-        VALUES ($1, $2, $3, $4::jsonb, now())
+        VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, now())
         ON CONFLICT (stream_id)
         DO UPDATE SET
           participant_id = EXCLUDED.participant_id,
-          audio_format = EXCLUDED.audio_format
+          audio_format = EXCLUDED.audio_format,
+          referee_settings = EXCLUDED.referee_settings
       `,
       [
         event.streamId,
         event.sessionId,
         event.participantId,
         JSON.stringify(event.audio),
+        JSON.stringify(event.refereeSettings),
       ],
     );
   }
@@ -1106,6 +1115,7 @@ interface StreamRow extends QueryResultRow {
   debrief_storage_path: string | null;
   profile_storage_path: string | null;
   debrief_status: string | null;
+  referee_settings: unknown;
 }
 
 interface SpeakerMappingRow extends QueryResultRow {
@@ -1252,7 +1262,14 @@ function toStreamSummary(row: StreamRow): HistoryStreamSummary {
     debriefStoragePath: row.debrief_storage_path ?? undefined,
     profileStoragePath: row.profile_storage_path ?? undefined,
     debriefStatus: row.debrief_status ?? undefined,
+    refereeSettings: withDefaultRefereeSettings(
+      isRecord(row.referee_settings) ? row.referee_settings : {},
+    ),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toSpeakerMapping(row: SpeakerMappingRow): HistorySpeakerMapping {

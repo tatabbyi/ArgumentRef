@@ -18,6 +18,45 @@ describe('referee intervention engine', () => {
     expect(engine.observe(fallacyDetected())).toBeUndefined();
   });
 
+  it('applies gentle intervention wording', () => {
+    const engine = new RefereeInterventionEngine({
+      config: baseConfig(),
+      settings: { interventionStyle: 'gentle' },
+      now: () => Date.UTC(2026, 0, 1),
+    });
+
+    const intervention = engine.observe(fallacyDetected());
+
+    expect(intervention?.message).toBe(
+      'Gently, ask them to restate the actual request before responding to it.',
+    );
+  });
+
+  it('suppresses medium fallacy prompts when sensitivity is low', () => {
+    const engine = new RefereeInterventionEngine({
+      config: baseConfig(),
+      settings: { fallacySensitivity: 'low' },
+    });
+
+    expect(
+      engine.observe(
+        fallacyDetected({
+          confidence: 'medium',
+          severity: 'moderate',
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('suppresses claim prompts when fact-check strictness is low', () => {
+    const engine = new RefereeInterventionEngine({
+      config: baseConfig(),
+      settings: { factCheckStrictness: 'low' },
+    });
+
+    expect(engine.observe(claimDetected())).toBeUndefined();
+  });
+
   it('turns fallacy detections into logic interventions', () => {
     const engine = new RefereeInterventionEngine({
       config: baseConfig(),
@@ -94,6 +133,20 @@ describe('referee intervention engine', () => {
     });
   });
 
+  it('uses compromise preference wording', () => {
+    const engine = new RefereeInterventionEngine({
+      config: baseConfig(),
+      settings: { compromisePreference: 'fair' },
+      now: () => Date.UTC(2026, 0, 1),
+    });
+
+    const intervention = engine.observe(compromiseSuggested());
+
+    expect(intervention?.message).toBe(
+      'Try the fairest compromise: Try the new chore split for two weeks, then review it.',
+    );
+  });
+
   it('only emits rating interventions when scores need attention', () => {
     const engine = new RefereeInterventionEngine({
       config: baseConfig(),
@@ -123,6 +176,21 @@ describe('referee intervention engine', () => {
       message: 'Ask each person for one specific example.',
       reason: 'Claims are broad and need concrete examples.',
       sourceEvent: 'argument.rating.updated',
+    });
+  });
+
+  it('uses intervention frequency for rating sensitivity', () => {
+    const engine = new RefereeInterventionEngine({
+      config: baseConfig(),
+      settings: { interventionFrequency: 'high' },
+      now: () => Date.UTC(2026, 0, 1),
+    });
+
+    const intervention = engine.observe(argumentRatingUpdated({ overallScore: 72 }));
+
+    expect(intervention).toMatchObject({
+      type: 'referee.intervention.suggested',
+      category: 'argument_quality',
     });
   });
 

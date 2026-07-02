@@ -197,6 +197,19 @@ export interface ArgumentRatingErrorEvent {
   message: string;
 }
 
+export type RefereeInterventionStyle = 'gentle' | 'balanced' | 'direct';
+export type RefereeSensitivity = 'low' | 'medium' | 'high';
+export type RefereeCompromisePreference = 'balanced' | 'practical' | 'fair';
+export type RefereeInterventionFrequency = 'low' | 'normal' | 'high';
+
+export interface RefereeSettings {
+  interventionStyle: RefereeInterventionStyle;
+  fallacySensitivity: RefereeSensitivity;
+  factCheckStrictness: RefereeSensitivity;
+  compromisePreference: RefereeCompromisePreference;
+  interventionFrequency: RefereeInterventionFrequency;
+}
+
 export type RefereeInterventionCategory =
   | 'factual'
   | 'logic'
@@ -325,6 +338,7 @@ export type ServerEvent =
       participantId: string;
       audio: AudioFormat;
       acceptedBinaryAudio: true;
+      refereeSettings: RefereeSettings;
     }
   | {
       type: 'audio.ack';

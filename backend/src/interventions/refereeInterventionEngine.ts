@@ -6,11 +6,15 @@ import type {
   FactCheckCompletedEvent,
   FallacyDetectedEvent,
   FallacyKind,
+  RefereeInterventionFrequency,
   RefereeInterventionCategory,
   RefereeInterventionPriority,
   RefereeInterventionSuggestedEvent,
+  RefereeInterventionStyle,
+  RefereeSettings,
   ServerEvent,
 } from '../protocol/messages.js';
+import { withDefaultRefereeSettings } from '../referee/refereeSettings.js';
 
 type InterventionSourceEvent =
   | ClaimDetectedEvent
@@ -21,6 +25,7 @@ type InterventionSourceEvent =
 
 interface RefereeInterventionEngineOptions {
   config: AppConfig;
+  settings?: Partial<RefereeSettings>;
   now?: () => number;
 }
 
@@ -47,9 +52,11 @@ export class RefereeInterventionEngine {
     number
   >();
   private readonly now: () => number;
+  private readonly settings: RefereeSettings;
 
   constructor(private readonly options: RefereeInterventionEngineOptions) {
     this.now = options.now ?? Date.now;
+    this.settings = withDefaultRefereeSettings(options.settings);
   }
 
   observe(event: ServerEvent): RefereeInterventionSuggestedEvent | undefined {
@@ -61,7 +68,7 @@ export class RefereeInterventionEngine {
       return undefined;
     }
 
-    const draft = toInterventionDraft(event);
+    const draft = toInterventionDraft(event, this.settings);
     if (!draft) {
       return undefined;
     }
@@ -82,12 +89,15 @@ export class RefereeInterventionEngine {
       type: 'referee.intervention.suggested',
       interventionId: buildInterventionId(draft),
       generatedAt: new Date(this.now()).toISOString(),
-      ...draft,
+      ...applyInterventionStyle(draft, this.settings.interventionStyle),
     };
   }
 
   private isCoolingDown(category: RefereeInterventionCategory): boolean {
-    const cooldownMs = this.options.config.refereeInterventionCooldownMs;
+    const cooldownMs = adjustedCooldownMs(
+      this.options.config.refereeInterventionCooldownMs,
+      this.settings.interventionFrequency,
+    );
     if (cooldownMs <= 0) {
       return false;
     }
@@ -109,29 +119,37 @@ function isInterventionSource(event: ServerEvent): event is InterventionSourceEv
 
 function toInterventionDraft(
   event: InterventionSourceEvent,
+  settings: RefereeSettings,
 ): InterventionDraft | undefined {
   switch (event.type) {
     case 'claim.detected':
-      return interventionFromClaim(event);
+      return interventionFromClaim(event, settings);
     case 'fact_check.completed':
-      return interventionFromFactCheck(event);
+      return interventionFromFactCheck(event, settings);
     case 'fallacy.detected':
-      return interventionFromFallacy(event);
+      return interventionFromFallacy(event, settings);
     case 'compromise.suggested':
-      return interventionFromCompromise(event);
+      return interventionFromCompromise(event, settings);
     case 'argument.rating.updated':
-      return interventionFromRating(event);
+      return interventionFromRating(event, settings);
     default:
       return assertNever(event);
   }
 }
 
-function interventionFromClaim(event: ClaimDetectedEvent): InterventionDraft {
+function interventionFromClaim(
+  event: ClaimDetectedEvent,
+  settings: RefereeSettings,
+): InterventionDraft | undefined {
+  if (settings.factCheckStrictness === 'low') {
+    return undefined;
+  }
+
   return {
     sessionId: event.sessionId,
     streamId: event.streamId,
     category: 'factual',
-    priority: 'low',
+    priority: settings.factCheckStrictness === 'high' ? 'medium' : 'low',
     message: 'Mark this as a factual claim and ask for the source.',
     reason: `Checkable claim detected: "${truncate(event.text, 140)}"`,
     sourceEvent: 'claim.detected',
@@ -143,13 +161,18 @@ function interventionFromClaim(event: ClaimDetectedEvent): InterventionDraft {
 
 function interventionFromFactCheck(
   event: FactCheckCompletedEvent,
-): InterventionDraft {
+  settings: RefereeSettings,
+): InterventionDraft | undefined {
   if (event.status === 'no_match') {
+    if (settings.factCheckStrictness === 'low') {
+      return undefined;
+    }
+
     return {
       sessionId: event.sessionId,
       streamId: event.streamId,
       category: 'factual',
-      priority: 'low',
+      priority: settings.factCheckStrictness === 'high' ? 'medium' : 'low',
       message:
         'No published fact-check matched this claim; ask for evidence before treating it as settled.',
       reason: event.summary,
@@ -160,11 +183,16 @@ function interventionFromFactCheck(
     };
   }
 
+  const priority = factCheckPriority(event);
+  if (settings.factCheckStrictness === 'low' && priority !== 'high') {
+    return undefined;
+  }
+
   return {
     sessionId: event.sessionId,
     streamId: event.streamId,
     category: 'factual',
-    priority: factCheckPriority(event),
+    priority: settings.factCheckStrictness === 'high' ? bumpPriority(priority) : priority,
     message:
       'Pause on this factual point and compare it with the matched fact-check.',
     reason: event.summary,
@@ -175,13 +203,24 @@ function interventionFromFactCheck(
   };
 }
 
-function interventionFromFallacy(event: FallacyDetectedEvent): InterventionDraft {
+function interventionFromFallacy(
+  event: FallacyDetectedEvent,
+  settings: RefereeSettings,
+): InterventionDraft | undefined {
+  const priority = fallacyPriority(event);
+  if (
+    (settings.fallacySensitivity === 'low' && priority !== 'high') ||
+    (settings.fallacySensitivity === 'medium' && priority === 'low')
+  ) {
+    return undefined;
+  }
+
   const speakerName = event.speakerLabel ?? event.speaker;
   return {
     sessionId: event.sessionId,
     streamId: event.streamId,
     category: 'logic',
-    priority: fallacyPriority(event),
+    priority,
     message: event.suggestedRefereeResponse,
     reason: `${speakerName} may be using ${formatFallacyKind(
       event.fallacy,
@@ -195,8 +234,15 @@ function interventionFromFallacy(event: FallacyDetectedEvent): InterventionDraft
 
 function interventionFromCompromise(
   event: CompromiseSuggestedEvent,
+  settings: RefereeSettings,
 ): InterventionDraft | undefined {
-  const suggestion = [...event.suggestions].sort((a, b) => a.rank - b.rank)[0];
+  const suggestion = [...event.suggestions].sort((a, b) => {
+    if (settings.compromisePreference === 'practical') {
+      return b.score - a.score;
+    }
+
+    return a.rank - b.rank;
+  })[0];
   if (!suggestion) {
     return undefined;
   }
@@ -206,7 +252,7 @@ function interventionFromCompromise(
     streamId: event.streamId,
     category: 'compromise',
     priority: compromisePriority(suggestion.score, suggestion.pushLevel),
-    message: `Try this compromise: ${suggestion.summary}`,
+    message: `${compromiseMessagePrefix(settings)} ${suggestion.summary}`,
     reason: suggestion.whyItCouldWork,
     sourceEvent: 'compromise.suggested',
     sourceId: suggestion.id,
@@ -215,11 +261,13 @@ function interventionFromCompromise(
 
 function interventionFromRating(
   event: ArgumentRatingUpdatedEvent,
+  settings: RefereeSettings,
 ): InterventionDraft | undefined {
   const lowestDimension = lowestScoredDimension(event);
+  const thresholds = ratingThresholds(settings.interventionFrequency);
   const shouldIntervene =
-    event.overallScore <= LOW_RATING_THRESHOLD ||
-    lowestDimension.score <= LOW_DIMENSION_THRESHOLD;
+    event.overallScore <= thresholds.overall ||
+    lowestDimension.score <= thresholds.dimension;
 
   if (!shouldIntervene) {
     return undefined;
@@ -248,6 +296,14 @@ function factCheckPriority(
   return /(false|misleading|incorrect|wrong|pants|bogus)/i.test(rating)
     ? 'high'
     : 'medium';
+}
+
+function bumpPriority(
+  priority: RefereeInterventionPriority,
+): RefereeInterventionPriority {
+  if (priority === 'low') return 'medium';
+  if (priority === 'medium') return 'high';
+  return 'high';
 }
 
 function fallacyPriority(
@@ -294,6 +350,76 @@ function ratingPriority(
   return 'low';
 }
 
+function ratingThresholds(frequency: RefereeInterventionFrequency): {
+  overall: number;
+  dimension: number;
+} {
+  switch (frequency) {
+    case 'low':
+      return { overall: 55, dimension: 45 };
+    case 'high':
+      return { overall: 75, dimension: 65 };
+    case 'normal':
+      return {
+        overall: LOW_RATING_THRESHOLD,
+        dimension: LOW_DIMENSION_THRESHOLD,
+      };
+    default:
+      return assertNever(frequency);
+  }
+}
+
+function adjustedCooldownMs(
+  cooldownMs: number,
+  frequency: RefereeInterventionFrequency,
+): number {
+  switch (frequency) {
+    case 'low':
+      return cooldownMs * 2;
+    case 'high':
+      return Math.floor(cooldownMs / 2);
+    case 'normal':
+      return cooldownMs;
+    default:
+      return assertNever(frequency);
+  }
+}
+
+function compromiseMessagePrefix(settings: RefereeSettings): string {
+  switch (settings.compromisePreference) {
+    case 'practical':
+      return 'Try the most practical next step:';
+    case 'fair':
+      return 'Try the fairest compromise:';
+    case 'balanced':
+      return 'Try this compromise:';
+    default:
+      return assertNever(settings.compromisePreference);
+  }
+}
+
+function applyInterventionStyle(
+  draft: InterventionDraft,
+  style: RefereeInterventionStyle,
+): InterventionDraft {
+  switch (style) {
+    case 'gentle':
+      return {
+        ...draft,
+        message: `Gently, ${lowercaseFirst(draft.message)}`,
+      };
+    case 'direct':
+      return {
+        ...draft,
+        message: `Pause now: ${draft.message}`,
+      };
+    case 'balanced':
+      return draft;
+    default:
+      return assertNever(style);
+  }
+}
+
 function lowestScoredDimension(event: ArgumentRatingUpdatedEvent): {
   label: string;
   score: number;
@@ -338,6 +464,10 @@ function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
+function lowercaseFirst(value: string): string {
+  return value.length > 0 ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+}
+
 function assertNever(value: never): never {
-  throw new Error(`Unhandled intervention source: ${JSON.stringify(value)}`);
+  throw new Error(`Unhandled intervention value: ${JSON.stringify(value)}`);
 }

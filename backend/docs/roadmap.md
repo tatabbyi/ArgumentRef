@@ -164,7 +164,20 @@ The rating includes `overallScore`, dimension scores, short strengths, short
 risks, and one `refereeFocus` action for the live UI. It rates the conversation
 process, not which person is correct.
 
-## Phase 8: Referee Interventions
+## Phase 8: Private Referee Settings
+
+Current implementation. The mobile app can pass per-session referee settings as
+WebSocket query parameters.
+
+```text
+wss://.../v1/audio?interventionStyle=gentle&fallacySensitivity=medium&factCheckStrictness=high&compromisePreference=balanced&interventionFrequency=normal
+```
+
+Settings are included in the `session.started` event, stored in session history,
+and used by the referee intervention engine to tune wording, strictness,
+sensitivity, compromise framing, and frequency.
+
+## Phase 9: Referee Interventions
 
 Current implementation. The backend converts high-signal analysis events into
 short referee actions for the mobile app.
@@ -181,7 +194,7 @@ The intervention event includes a category, priority, user-facing message,
 reason, and source event. This is intentionally rule-based so it adds no new API
 cost and stays fast enough for live use.
 
-## Phase 9: Session Storage
+## Phase 10: Session Storage
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on
@@ -190,6 +203,7 @@ disk, and exposes read endpoints for the app.
 Stored history:
 
 - sessions and streams
+- stream referee settings
 - speaker mappings
 - final transcript lines
 - detected claims
