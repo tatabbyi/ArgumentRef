@@ -15,6 +15,7 @@ import {
   createDeepgramTranscriber,
   type Transcriber,
 } from '../transcription/deepgramTranscriber.js';
+import { ClaimDetector } from '../claims/claimDetector.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
   encoding: 'unknown',
@@ -115,8 +116,19 @@ async function handleAudioConnection(
     participantId: optionalQuery(url, 'participantId'),
     audio,
   });
+  const claimDetector = new ClaimDetector();
+  const emitEvent = (event: ServerEvent) => {
+    sendEvent(webSocket, event);
 
-  sendEvent(webSocket, {
+    if (event.type === 'transcript.final') {
+      const claim = claimDetector.detect(event);
+      if (claim) {
+        sendEvent(webSocket, claim);
+      }
+    }
+  };
+
+  emitEvent({
     type: 'session.started',
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -132,7 +144,7 @@ async function handleAudioConnection(
       streamId: recorder.streamId,
       audio,
     },
-    (event) => sendEvent(webSocket, event),
+    emitEvent,
   );
 
   webSocket.on('message', (data, isBinary) => {

@@ -197,6 +197,40 @@ npm run lint
 npm test
 ```
 
+## Test Deepgram Transcript Events
+
+After the Render service has `DEEPGRAM_API_KEY` configured and redeployed, test transcript events with an audio file that contains clear speech.
+
+For a WAV or encoded audio file:
+
+```sh
+npm run test:remote-audio -- --file ./sample.wav
+```
+
+For raw PCM16 mono audio:
+
+```sh
+npm run test:remote-audio -- --file ./sample.pcm --encoding pcm16 --sampleRateHz 16000 --channels 1
+```
+
+The command connects to:
+
+```text
+wss://argumentref-backend.onrender.com/v1/audio
+```
+
+Expected output:
+
+```json
+{"type":"session.started", "...":"..."}
+{"type":"transcription.connected", "provider":"deepgram", "...":"..."}
+{"type":"transcript.partial", "speaker":"speaker_0", "text":"..."}
+{"type":"transcript.final", "speaker":"speaker_0", "text":"..."}
+{"type":"claim.detected", "speaker":"speaker_0", "text":"...", "reason":"contains_number"}
+```
+
+For speaker diarization, use audio with two clearly different speakers. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
+
 ## Next Step
 
-The next module should detect claims from `transcript.final` events and queue them for fact-checking. The frontend should consume normalized transcript events from the backend, not talk to Deepgram directly.
+The backend now detects checkable claims from `transcript.final` events and emits `claim.detected`. The next module should send those queued claims to a fact-checking provider. The frontend should consume normalized transcript and claim events from the backend, not talk to Deepgram directly.
