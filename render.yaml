@@ -16,6 +16,8 @@ services:
         value: /tmp/argumentref-sessions
       - key: MAX_AUDIO_CHUNK_BYTES
         value: 1048576
+      - key: DATABASE_URL
+        sync: false
       - key: DEEPGRAM_MODEL
         value: nova-3
       - key: DEEPGRAM_LANGUAGE
@@ -40,3 +42,19 @@ services:
         value: 30000
       - key: COMPROMISE_INTERVAL_MS
         value: 30000
+      - key: FALLACY_DETECTION_ENABLED
+        value: true
+      - key: FALLACY_ANALYSIS_INTERVAL_MS
+        value: 20000
+      - key: FALLACY_MIN_CONFIDENCE
+        value: medium
+      - key: ARGUMENT_RATING_ENABLED
+        value: true
+      - key: ARGUMENT_RATING_INTERVAL_MS
+        value: 30000
+      - key: ARGUMENT_RATING_MIN_TRANSCRIPT_LINES
+        value: 4
+      - key: REFEREE_INTERVENTIONS_ENABLED
+        value: true
+      - key: REFEREE_INTERVENTION_COOLDOWN_MS
+        value: 10000

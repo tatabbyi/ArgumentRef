@@ -1,10 +1,13 @@
 import path from 'node:path';
+import type { FallacyConfidence } from './protocol/messages.js';
 
 export interface AppConfig {
   host: string;
   port: number;
   audioStorageDir: string;
   maxAudioChunkBytes: number;
+  databaseUrl?: string;
+  databaseSsl: boolean;
   deepgramApiKey?: string;
   deepgramModel: string;
   deepgramLanguage: string;
@@ -19,6 +22,14 @@ export interface AppConfig {
   roomToneGeminiModel: string;
   compromiseInitialDelayMs: number;
   compromiseIntervalMs: number;
+  fallacyDetectionEnabled: boolean;
+  fallacyAnalysisIntervalMs: number;
+  fallacyMinConfidence: FallacyConfidence;
+  argumentRatingEnabled: boolean;
+  argumentRatingIntervalMs: number;
+  argumentRatingMinTranscriptLines: number;
+  refereeInterventionsEnabled: boolean;
+  refereeInterventionCooldownMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -27,6 +38,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: readNumber(env.PORT, 8081),
     audioStorageDir: path.resolve(env.AUDIO_STORAGE_DIR ?? 'data/sessions'),
     maxAudioChunkBytes: readNumber(env.MAX_AUDIO_CHUNK_BYTES, 1024 * 1024),
+    databaseUrl: env.DATABASE_URL,
+    databaseSsl: readBoolean(
+      env.DATABASE_SSL,
+      databaseUrlRequestsSsl(env.DATABASE_URL),
+    ),
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     deepgramModel: env.DEEPGRAM_MODEL ?? 'nova-3',
     deepgramLanguage: env.DEEPGRAM_LANGUAGE ?? 'en-US',
@@ -48,6 +64,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.ROOM_TONE_GEMINI_MODEL ?? 'gemini-3.1-flash-lite',
     compromiseInitialDelayMs: readNumber(env.COMPROMISE_INITIAL_DELAY_MS, 30_000),
     compromiseIntervalMs: readNumber(env.COMPROMISE_INTERVAL_MS, 30_000),
+    fallacyDetectionEnabled: readBoolean(env.FALLACY_DETECTION_ENABLED, true),
+    fallacyAnalysisIntervalMs: readNumber(env.FALLACY_ANALYSIS_INTERVAL_MS, 20_000),
+    fallacyMinConfidence: readFallacyConfidence(
+      env.FALLACY_MIN_CONFIDENCE,
+      'medium',
+    ),
+    argumentRatingEnabled: readBoolean(env.ARGUMENT_RATING_ENABLED, true),
+    argumentRatingIntervalMs: readNumber(env.ARGUMENT_RATING_INTERVAL_MS, 30_000),
+    argumentRatingMinTranscriptLines: readNumber(
+      env.ARGUMENT_RATING_MIN_TRANSCRIPT_LINES,
+      4,
+    ),
+    refereeInterventionsEnabled: readBoolean(
+      env.REFEREE_INTERVENTIONS_ENABLED,
+      true,
+    ),
+    refereeInterventionCooldownMs: readNonNegativeNumber(
+      env.REFEREE_INTERVENTION_COOLDOWN_MS,
+      10_000,
+    ),
   };
 }
 
@@ -66,4 +102,37 @@ function readBoolean(value: string | undefined, fallback: boolean): boolean {
   }
 
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function readNonNegativeNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function databaseUrlRequestsSsl(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.searchParams.get('sslmode') === 'require';
+  } catch {
+    return false;
+  }
+}
+
+function readFallacyConfidence(
+  value: string | undefined,
+  fallback: FallacyConfidence,
+): FallacyConfidence {
+  if (value === 'low' || value === 'medium' || value === 'high') {
+    return value;
+  }
+
+  return fallback;
 }

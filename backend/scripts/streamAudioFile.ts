@@ -12,6 +12,11 @@ interface CliOptions {
   speakerLabels: string[];
   sampleRateHz?: number;
   channels?: number;
+  interventionStyle?: string;
+  fallacySensitivity?: string;
+  factCheckStrictness?: string;
+  compromisePreference?: string;
+  interventionFrequency?: string;
   chunkBytes: number;
   delayMs: number;
   finalWaitMs: number;
@@ -105,6 +110,13 @@ function printEvent(event: ServerEvent): void {
     case 'room_tone.analyzed':
     case 'room_tone.disabled':
     case 'room_tone.error':
+    case 'fallacy.detected':
+    case 'fallacy.disabled':
+    case 'fallacy.error':
+    case 'argument.rating.updated':
+    case 'argument.rating.disabled':
+    case 'argument.rating.error':
+    case 'referee.intervention.suggested':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;
@@ -176,6 +188,12 @@ function buildWebSocketUrl(options: CliOptions): string {
     url.searchParams.set('channels', String(options.channels));
   }
 
+  setOptionalQuery(url, 'interventionStyle', options.interventionStyle);
+  setOptionalQuery(url, 'fallacySensitivity', options.fallacySensitivity);
+  setOptionalQuery(url, 'factCheckStrictness', options.factCheckStrictness);
+  setOptionalQuery(url, 'compromisePreference', options.compromisePreference);
+  setOptionalQuery(url, 'interventionFrequency', options.interventionFrequency);
+
   return url.toString();
 }
 
@@ -216,6 +234,11 @@ function parseArgs(args: string[]): CliOptions {
     speakerLabels: readSpeakerLabels(values.get('speakerLabels')),
     sampleRateHz: readOptionalNumber(values.get('sampleRateHz')),
     channels: readOptionalNumber(values.get('channels')),
+    interventionStyle: values.get('interventionStyle'),
+    fallacySensitivity: values.get('fallacySensitivity'),
+    factCheckStrictness: values.get('factCheckStrictness'),
+    compromisePreference: values.get('compromisePreference'),
+    interventionFrequency: values.get('interventionFrequency'),
     chunkBytes: readOptionalNumber(values.get('chunkBytes')) ?? 3200,
     delayMs: readOptionalNumber(values.get('delayMs')) ?? 100,
     finalWaitMs: readOptionalNumber(values.get('finalWaitMs')) ?? 3000,
@@ -240,6 +263,12 @@ function readOptionalNumber(value: string | undefined): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function setOptionalQuery(url: URL, key: string, value: string | undefined): void {
+  if (value) {
+    url.searchParams.set(key, value);
+  }
 }
 
 function sleep(ms: number): Promise<void> {

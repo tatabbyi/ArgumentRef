@@ -197,6 +197,133 @@ export interface RoomToneErrorEvent {
   message: string;
 }
 
+export type FallacyKind =
+  | 'ad_hominem'
+  | 'straw_man'
+  | 'false_dichotomy'
+  | 'slippery_slope'
+  | 'hasty_generalization'
+  | 'circular_reasoning'
+  | 'red_herring'
+  | 'whataboutism'
+  | 'burden_of_proof_shift'
+  | 'appeal_to_authority'
+  | 'correlation_causation';
+
+export type FallacyConfidence = 'low' | 'medium' | 'high';
+
+export type FallacySeverity = 'minor' | 'moderate' | 'serious';
+
+export interface FallacyDetectedEvent {
+  type: 'fallacy.detected';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  detectedAt: string;
+  transcriptLineCount: number;
+  speaker: string;
+  speakerLabel?: string;
+  fallacy: FallacyKind;
+  confidence: FallacyConfidence;
+  severity: FallacySeverity;
+  quote: string;
+  explanation: string;
+  suggestedRefereeResponse: string;
+}
+
+export interface FallacyDisabledEvent {
+  type: 'fallacy.disabled';
+  provider: 'gemini';
+  reason: 'disabled' | 'missing_gemini_api_key';
+}
+
+export interface FallacyErrorEvent {
+  type: 'fallacy.error';
+  provider: 'gemini';
+  message: string;
+}
+
+export interface ArgumentRatingDimensions {
+  clarity: number;
+  evidenceQuality: number;
+  logicalConsistency: number;
+  listening: number;
+  emotionalControl: number;
+  fairness: number;
+}
+
+export interface ArgumentRatingUpdatedEvent {
+  type: 'argument.rating.updated';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  generatedAt: string;
+  transcriptLineCount: number;
+  overallScore: number;
+  dimensions: ArgumentRatingDimensions;
+  strengths: string[];
+  risks: string[];
+  refereeFocus: string;
+}
+
+export interface ArgumentRatingDisabledEvent {
+  type: 'argument.rating.disabled';
+  provider: 'gemini';
+  reason: 'disabled' | 'missing_gemini_api_key';
+}
+
+export interface ArgumentRatingErrorEvent {
+  type: 'argument.rating.error';
+  provider: 'gemini';
+  message: string;
+}
+
+export type RefereeInterventionStyle = 'gentle' | 'balanced' | 'direct';
+export type RefereeSensitivity = 'low' | 'medium' | 'high';
+export type RefereeCompromisePreference = 'balanced' | 'practical' | 'fair';
+export type RefereeInterventionFrequency = 'low' | 'normal' | 'high';
+
+export interface RefereeSettings {
+  interventionStyle: RefereeInterventionStyle;
+  fallacySensitivity: RefereeSensitivity;
+  factCheckStrictness: RefereeSensitivity;
+  compromisePreference: RefereeCompromisePreference;
+  interventionFrequency: RefereeInterventionFrequency;
+}
+
+export type RefereeInterventionCategory =
+  | 'factual'
+  | 'logic'
+  | 'compromise'
+  | 'argument_quality';
+
+export type RefereeInterventionPriority = 'low' | 'medium' | 'high';
+
+export type RefereeInterventionSourceEvent =
+  | 'claim.detected'
+  | 'fact_check.completed'
+  | 'fallacy.detected'
+  | 'compromise.suggested'
+  | 'argument.rating.updated';
+
+export interface RefereeInterventionSuggestedEvent {
+  type: 'referee.intervention.suggested';
+  sessionId: string;
+  streamId: string;
+  interventionId: string;
+  generatedAt: string;
+  category: RefereeInterventionCategory;
+  priority: RefereeInterventionPriority;
+  message: string;
+  reason: string;
+  sourceEvent: RefereeInterventionSourceEvent;
+  sourceId?: string;
+  speaker?: string;
+  speakerLabel?: string;
+}
+
 export type ConversationDebriefStatus =
   | 'completed'
   | 'disabled'
@@ -294,6 +421,7 @@ export type ServerEvent =
       participantId: string;
       audio: AudioFormat;
       acceptedBinaryAudio: true;
+      refereeSettings: RefereeSettings;
     }
   | {
       type: 'audio.ack';
@@ -352,6 +480,13 @@ export type ServerEvent =
   | RoomToneAnalyzedEvent
   | RoomToneDisabledEvent
   | RoomToneErrorEvent
+  | FallacyDetectedEvent
+  | FallacyDisabledEvent
+  | FallacyErrorEvent
+  | ArgumentRatingUpdatedEvent
+  | ArgumentRatingDisabledEvent
+  | ArgumentRatingErrorEvent
+  | RefereeInterventionSuggestedEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent

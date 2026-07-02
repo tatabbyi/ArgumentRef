@@ -149,6 +149,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     port: 0,
     audioStorageDir: '/tmp/argumentref-test',
     maxAudioChunkBytes: 1024 * 1024,
+    databaseSsl: false,
     deepgramModel: 'nova-3',
     deepgramLanguage: 'en-US',
     factCheckEnabled: false,
@@ -160,6 +161,14 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     roomToneGeminiModel: 'gemini-3.1-flash-lite',
     compromiseInitialDelayMs: 30_000,
     compromiseIntervalMs: 30_000,
+    fallacyDetectionEnabled: false,
+    fallacyAnalysisIntervalMs: 20_000,
+    fallacyMinConfidence: 'medium',
+    argumentRatingEnabled: false,
+    argumentRatingIntervalMs: 30_000,
+    argumentRatingMinTranscriptLines: 4,
+    refereeInterventionsEnabled: false,
+    refereeInterventionCooldownMs: 10_000,
     ...overrides,
   };
 }

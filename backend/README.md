@@ -196,6 +196,8 @@ PORT=8081
 HOST=0.0.0.0
 AUDIO_STORAGE_DIR=data/sessions
 MAX_AUDIO_CHUNK_BYTES=1048576
+DATABASE_URL=
+DATABASE_SSL=false
 DEEPGRAM_API_KEY=
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
@@ -208,6 +210,14 @@ GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
 COMPROMISE_INITIAL_DELAY_MS=30000
 COMPROMISE_INTERVAL_MS=30000
+FALLACY_DETECTION_ENABLED=true
+FALLACY_ANALYSIS_INTERVAL_MS=20000
+FALLACY_MIN_CONFIDENCE=medium
+ARGUMENT_RATING_ENABLED=true
+ARGUMENT_RATING_INTERVAL_MS=30000
+ARGUMENT_RATING_MIN_TRANSCRIPT_LINES=4
+REFEREE_INTERVENTIONS_ENABLED=true
+REFEREE_INTERVENTION_COOLDOWN_MS=10000
 ```
 
 ## Deploy to Render
@@ -231,6 +241,20 @@ The mobile WebSocket endpoint is the same URL with `https` changed to `wss` and 
 ```text
 wss://argumentref-backend.onrender.com/v1/audio
 ```
+
+Optional private referee settings can be added as query parameters:
+
+```text
+wss://argumentref-backend.onrender.com/v1/audio?interventionStyle=gentle&fallacySensitivity=medium&factCheckStrictness=high&compromisePreference=balanced&interventionFrequency=normal
+```
+
+Supported values:
+
+- `interventionStyle`: `gentle`, `balanced`, `direct`
+- `fallacySensitivity`: `low`, `medium`, `high`
+- `factCheckStrictness`: `low`, `medium`, `high`
+- `compromisePreference`: `balanced`, `practical`, `fair`
+- `interventionFrequency`: `low`, `normal`, `high`
 
 The user does not type this URL into the mobile app. The frontend team should put it in app configuration, for example:
 
@@ -266,9 +290,63 @@ GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
 Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
-Add `GEMINI_API_KEY` there too to activate compromise suggestions. Do not put it in the Flutter app.
+Add `GEMINI_API_KEY` there too to activate compromise suggestions, conversation debriefs, logical fallacy detection, and argument ratings. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
+
+Add `DATABASE_URL` in Render's Environment tab to activate Postgres history. Use Render's internal database URL when the database and backend are in the same Render account/region. Keep `DATABASE_SSL=false` for the internal URL unless Render gives you a URL with `sslmode=require`.
+
+When `DATABASE_URL` is configured, the backend creates these tables automatically on first history write:
+
+- `history_sessions`
+- `history_streams`
+- `history_events`
+- `transcript_lines`
+- `detected_claims`
+- `fact_checks`
+- `fallacy_detections`
+- `argument_ratings`
+- `referee_interventions`
+- `compromise_suggestions`
+- `speaker_mappings`
+
+Referee settings are stored on each `history_streams` row as `referee_settings`.
+
+## History API
+
+After `DATABASE_URL` is configured and at least one session has produced history
+events, the backend exposes session history over HTTP.
+
+List recent sessions:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions
+```
+
+Optional limit, capped at 100:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions?limit=20
+```
+
+Read one session:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions/demo-session
+```
+
+If `DATABASE_URL` is not configured, these endpoints return:
+
+```json
+{
+  "error": "history_disabled",
+  "message": "Set DATABASE_URL on the backend to enable session history."
+}
+```
+
+The session detail response includes streams, speaker mappings, final transcript
+lines, detected claims, fact-check events, compromise suggestions, and raw stored
+events.
 
 For the first mobile-to-Deepgram test, send raw PCM 16-bit mono audio:
 
@@ -327,6 +405,7 @@ Expected output:
 {"type":"claim.detected", "speaker":"speaker_0", "text":"...", "reason":"contains_number"}
 {"type":"fact_check.started", "claimId":"...", "provider":"google-fact-check"}
 {"type":"fact_check.completed", "claimId":"...", "status":"matched_fact_check", "sources":[...]}
+{"type":"fallacy.detected", "speaker":"speaker_0", "fallacy":"straw_man", "confidence":"medium", "quote":"..."}
 ```
 
 For speaker diarization, use audio with two clearly different speakers who take turns speaking. Deepgram labels them as `speaker_0`, `speaker_1`, and so on. It does not know real names unless the app maps those labels later.
@@ -391,6 +470,105 @@ Or:
 
 This free integration searches existing published fact checks. It should not claim that an unmatched statement is true or false.
 
+## Test Logical Fallacy Events
+
+Fallacy detection reuses `GEMINI_API_KEY`. No extra secret is required.
+
+The backend watches final transcript lines and periodically emits conservative
+fallacy events:
+
+```json
+{
+  "type": "fallacy.detected",
+  "provider": "gemini",
+  "speaker": "speaker_0",
+  "speakerLabel": "PersonA",
+  "fallacy": "straw_man",
+  "confidence": "medium",
+  "severity": "moderate",
+  "quote": "So you are saying I should never have any free time.",
+  "explanation": "This may exaggerate the other person's position rather than responding to the actual request.",
+  "suggestedRefereeResponse": "Pause there and restate the other person's actual point before responding."
+}
+```
+
+Only `medium` and `high` confidence detections are emitted by default. This is a
+referee hint, not a final judgment.
+
+## Test Argument Rating Events
+
+Argument ratings reuse `GEMINI_API_KEY`. No extra secret is required.
+
+The backend watches final transcript lines and periodically emits a neutral score
+for the argument process:
+
+```json
+{
+  "type": "argument.rating.updated",
+  "provider": "gemini",
+  "overallScore": 78,
+  "dimensions": {
+    "clarity": 82,
+    "evidenceQuality": 68,
+    "logicalConsistency": 76,
+    "listening": 70,
+    "emotionalControl": 84,
+    "fairness": 75
+  },
+  "strengths": ["Both speakers are naming practical constraints."],
+  "risks": ["Some claims still need concrete examples."],
+  "refereeFocus": "Ask each person for one specific example and one next step."
+}
+```
+
+This rates the conversation quality, not which person is right. It is intended as
+live guidance for the referee UI.
+
+## Test Private Referee Settings
+
+Private referee settings are per-session WebSocket options. They do not need a
+new Render secret and they are returned on `session.started`:
+
+```json
+{
+  "type": "session.started",
+  "refereeSettings": {
+    "interventionStyle": "gentle",
+    "fallacySensitivity": "medium",
+    "factCheckStrictness": "high",
+    "compromisePreference": "balanced",
+    "interventionFrequency": "normal"
+  }
+}
+```
+
+They adjust only backend referee behavior. For example, `interventionStyle=gentle`
+softens intervention wording, `factCheckStrictness=high` prompts earlier on
+factual claims, and `interventionFrequency=low` reduces rating prompts and
+increases cooldowns.
+
+## Test Referee Intervention Events
+
+Referee interventions do not need another API key. They convert existing backend
+events into one concise action the UI can surface.
+
+Example:
+
+```json
+{
+  "type": "referee.intervention.suggested",
+  "category": "logic",
+  "priority": "medium",
+  "message": "Pause there and restate the other person's actual point before responding.",
+  "reason": "PersonA may be using straw man: This may exaggerate the other person's position.",
+  "sourceEvent": "fallacy.detected"
+}
+```
+
+The engine currently listens to detected claims, completed fact-checks, fallacy
+detections, compromise suggestions, and low argument ratings. It uses
+`REFEREE_INTERVENTION_COOLDOWN_MS` to avoid repeated prompts in the same category.
+
 ## Next Step
 
-The backend now detects checkable claims from `transcript.final` events and sends them to Google Fact Check Tools when configured. The frontend should consume normalized transcript, claim, and fact-check events from the backend, not talk to Deepgram or Google directly.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, supports private referee settings, and turns those signals into referee intervention suggestions. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, settings, and history data from the backend.

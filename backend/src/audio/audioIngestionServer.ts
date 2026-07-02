@@ -8,8 +8,10 @@ import {
   parseClientControlMessage,
   serializeServerEvent,
   type AudioFormat,
+  type RefereeSettings,
   type ServerEvent,
 } from '../protocol/messages.js';
+import { parseRefereeSettingsFromUrl } from '../referee/refereeSettings.js';
 import { SessionStore, type AudioStreamRecorder } from '../sessions/sessionStore.js';
 import {
   createDeepgramTranscriber,
@@ -20,6 +22,13 @@ import { createFactCheckService } from '../factChecks/factCheckService.js';
 import { CompromiseAdvisor } from '../compromises/compromiseAdvisor.js';
 import { ConversationDebriefer } from '../debriefs/conversationDebriefer.js';
 import { RoomToneAnalyzer } from '../roomTone/roomToneAnalyzer.js';
+import { FallacyDetector } from '../fallacies/fallacyDetector.js';
+import {
+  createHistoryStore,
+  type HistoryStore,
+} from '../history/historyStore.js';
+import { RefereeInterventionEngine } from '../interventions/refereeInterventionEngine.js';
+import { ArgumentRater } from '../ratings/argumentRater.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 import { InterruptionDetector } from '../interruptions/interruptionDetector.js';
 
@@ -36,7 +45,10 @@ export interface AudioIngestionServer {
 
 export function createAudioIngestionServer(config: AppConfig): AudioIngestionServer {
   const sessionStore = new SessionStore(config.audioStorageDir);
-  const httpServer = createServer(handleHttpRequest);
+  const historyStore = createHistoryStore(config);
+  const httpServer = createServer((request, response) => {
+    void handleHttpRequest(request, response, historyStore);
+  });
   const webSocketServer = new WebSocketServer({
     noServer: true,
     maxPayload: config.maxAudioChunkBytes,
@@ -57,7 +69,7 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
   });
 
   webSocketServer.on('connection', (webSocket, request) => {
-    void handleAudioConnection(webSocket, request, sessionStore, config);
+    void handleAudioConnection(webSocket, request, sessionStore, historyStore, config);
   });
 
   return {
@@ -89,13 +101,20 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
           });
         });
       });
+      await historyStore.close();
     },
     address: () => httpServer.address(),
   };
 }
 
-function handleHttpRequest(request: IncomingMessage, response: ServerResponse): void {
-  if (request.url === '/health') {
+async function handleHttpRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  historyStore: HistoryStore,
+): Promise<void> {
+  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+
+  if (url.pathname === '/health') {
     sendJson(response, 200, {
       status: 'ok',
       service: 'argumentref-backend',
@@ -103,20 +122,104 @@ function handleHttpRequest(request: IncomingMessage, response: ServerResponse): 
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/v1/sessions') {
+    await sendSessionList(response, historyStore, url);
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/sessions/')) {
+    await sendSessionDetail(response, historyStore, url);
+    return;
+  }
+
   sendJson(response, 404, {
     error: 'not_found',
-    message: 'Use /health or connect WebSocket clients to /v1/audio.',
+    message:
+      'Use /health, GET /v1/sessions, GET /v1/sessions/:sessionId, or connect WebSocket clients to /v1/audio.',
   });
+}
+
+async function sendSessionList(
+  response: ServerResponse,
+  historyStore: HistoryStore,
+  url: URL,
+): Promise<void> {
+  if (!historyStore.isEnabled()) {
+    sendJson(response, 503, {
+      error: 'history_disabled',
+      message: 'Set DATABASE_URL on the backend to enable session history.',
+    });
+    return;
+  }
+
+  try {
+    const limit = parseLimit(url.searchParams.get('limit'));
+    const sessions = await historyStore.listSessions(limit);
+    sendJson(response, 200, {
+      sessions,
+      limit,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: 'history_query_failed',
+      message: error instanceof Error ? error.message : 'Failed to query session history.',
+    });
+  }
+}
+
+async function sendSessionDetail(
+  response: ServerResponse,
+  historyStore: HistoryStore,
+  url: URL,
+): Promise<void> {
+  if (!historyStore.isEnabled()) {
+    sendJson(response, 503, {
+      error: 'history_disabled',
+      message: 'Set DATABASE_URL on the backend to enable session history.',
+    });
+    return;
+  }
+
+  const sessionId = decodeURIComponent(url.pathname.slice('/v1/sessions/'.length));
+  if (!sessionId) {
+    sendJson(response, 400, {
+      error: 'invalid_session_id',
+      message: 'Session ID is required.',
+    });
+    return;
+  }
+
+  try {
+    const session = await historyStore.getSession(sessionId);
+    if (!session) {
+      sendJson(response, 404, {
+        error: 'session_not_found',
+        message: `No session history found for ${sessionId}.`,
+      });
+      return;
+    }
+
+    sendJson(response, 200, {
+      session,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: 'history_query_failed',
+      message: error instanceof Error ? error.message : 'Failed to query session history.',
+    });
+  }
 }
 
 async function handleAudioConnection(
   webSocket: WebSocket,
   request: IncomingMessage,
   sessionStore: SessionStore,
+  historyStore: HistoryStore,
   config: AppConfig,
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const audio = audioFormatFromUrl(url);
+  const refereeSettings = parseRefereeSettingsFromUrl(url);
   const recorder = await sessionStore.createAudioStream({
     sessionId: optionalQuery(url, 'sessionId'),
     participantId: optionalQuery(url, 'participantId'),
@@ -124,11 +227,39 @@ async function handleAudioConnection(
   });
   const claimDetector = new ClaimDetector();
   const factCheckService = createFactCheckService(config);
+  const interventionEngine = new RefereeInterventionEngine({
+    config,
+    settings: refereeSettings,
+  });
+  const sendAndRecordClientEvent = (event: ServerEvent) => {
+    sendEvent(webSocket, event);
+    recordHistoryEvent(historyStore, event);
+  };
+  const emitClientEvent = (event: ServerEvent) => {
+    sendAndRecordClientEvent(event);
+
+    const intervention = interventionEngine.observe(event);
+    if (intervention) {
+      sendAndRecordClientEvent(intervention);
+    }
+  };
+  const fallacyDetector = new FallacyDetector({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: emitClientEvent,
+  });
+  const argumentRater = new ArgumentRater({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: emitClientEvent,
+  });
   const compromiseAdvisor = new CompromiseAdvisor({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
     config,
-    emit: (event) => sendEvent(webSocket, event),
+    emit: emitClientEvent,
   });
   const roomToneAnalyzer = new RoomToneAnalyzer({
     sessionId: recorder.sessionId,
@@ -154,10 +285,10 @@ async function handleAudioConnection(
     if (event.type === 'transcript.partial' || event.type === 'transcript.final') {
       const labelled = speakerLabeler.labelTranscript(event);
       if (labelled.mapping) {
-        sendEvent(webSocket, labelled.mapping);
+        emitClientEvent(labelled.mapping);
       }
 
-      sendEvent(webSocket, labelled.event);
+      emitClientEvent(labelled.event);
 
       if (labelled.event.type === 'transcript.final') {
         const interruption = interruptionDetector.recordTranscript(labelled.event);
@@ -166,21 +297,21 @@ async function handleAudioConnection(
         }
 
         roomToneAnalyzer.recordTranscript(labelled.event);
+        fallacyDetector.recordTranscript(labelled.event);
+        argumentRater.recordTranscript(labelled.event);
         compromiseAdvisor.recordTranscript(labelled.event);
         debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
         if (claim) {
-          sendEvent(webSocket, claim);
-          factCheckService.checkClaim(claim, (factCheckEvent) => {
-            sendEvent(webSocket, factCheckEvent);
-          });
+          emitClientEvent(claim);
+          factCheckService.checkClaim(claim, emitClientEvent);
         }
       }
 
       return;
     }
 
-    sendEvent(webSocket, event);
+    emitClientEvent(event);
   };
 
   emitEvent({
@@ -190,9 +321,12 @@ async function handleAudioConnection(
     participantId: recorder.participantId,
     audio,
     acceptedBinaryAudio: true,
+    refereeSettings,
   });
   compromiseAdvisor.start();
   roomToneAnalyzer.start();
+  fallacyDetector.start();
+  argumentRater.start();
 
   const transcriber = createDeepgramTranscriber(
     config,
@@ -209,9 +343,12 @@ async function handleAudioConnection(
       webSocket,
       recorder,
       transcriber,
+      fallacyDetector,
+      argumentRater,
       compromiseAdvisor,
       roomToneAnalyzer,
       debriefer,
+      historyStore,
       sendEnded,
     });
     return ending;
@@ -222,6 +359,7 @@ async function handleAudioConnection(
       webSocket,
       recorder,
       transcriber,
+      refereeSettings,
       () => finishConnection(true),
       data,
       isBinary,
@@ -241,6 +379,7 @@ async function handleMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
   transcriber: Transcriber,
+  refereeSettings: RefereeSettings,
   endSession: () => Promise<void>,
   data: WebSocket.RawData,
   isBinary: boolean,
@@ -263,6 +402,7 @@ async function handleMessage(
     await handleControlMessage(
       webSocket,
       recorder,
+      refereeSettings,
       endSession,
       data.toString('utf8'),
     );
@@ -274,6 +414,7 @@ async function handleMessage(
 async function handleControlMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
+  refereeSettings: RefereeSettings,
   endSession: () => Promise<void>,
   payload: string,
 ): Promise<void> {
@@ -288,6 +429,7 @@ async function handleControlMessage(
         participantId: recorder.participantId,
         audio: message.audio ?? DEFAULT_AUDIO,
         acceptedBinaryAudio: true,
+        refereeSettings,
       });
       return;
     case 'audio.commit':
@@ -306,30 +448,38 @@ async function endSession(options: {
   webSocket: WebSocket;
   recorder: AudioStreamRecorder;
   transcriber: Transcriber;
+  fallacyDetector: FallacyDetector;
+  argumentRater: ArgumentRater;
   compromiseAdvisor: CompromiseAdvisor;
   roomToneAnalyzer: RoomToneAnalyzer;
   debriefer: ConversationDebriefer;
+  historyStore: HistoryStore;
   sendEnded: boolean;
 }): Promise<void> {
+  options.fallacyDetector.close();
+  options.argumentRater.close();
   options.compromiseAdvisor.close();
   options.roomToneAnalyzer.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();
   const debrief = await options.debriefer.finish(snapshot);
+  const endedEvent: ServerEvent = {
+    type: 'session.ended',
+    sessionId: snapshot.sessionId,
+    streamId: snapshot.streamId,
+    participantId: snapshot.participantId,
+    bytesReceived: snapshot.bytesReceived,
+    chunksReceived: snapshot.chunksReceived,
+    storagePath: snapshot.filePath,
+    debriefStoragePath: debrief.debriefPath,
+    profileStoragePath: debrief.profilePath,
+    debriefStatus: debrief.status,
+  };
+
+  await recordHistoryEvent(options.historyStore, endedEvent);
 
   if (options.sendEnded) {
-    sendEvent(options.webSocket, {
-      type: 'session.ended',
-      sessionId: snapshot.sessionId,
-      streamId: snapshot.streamId,
-      participantId: snapshot.participantId,
-      bytesReceived: snapshot.bytesReceived,
-      chunksReceived: snapshot.chunksReceived,
-      storagePath: snapshot.filePath,
-      debriefStoragePath: debrief.debriefPath,
-      profileStoragePath: debrief.profilePath,
-      debriefStatus: debrief.status,
-    });
+    sendEvent(options.webSocket, endedEvent);
     options.webSocket.close(1000, 'session stopped');
   }
 }
@@ -352,6 +502,19 @@ function sendEvent(webSocket: WebSocket, event: ServerEvent): void {
   if (webSocket.readyState === WebSocket.OPEN) {
     webSocket.send(serializeServerEvent(event));
   }
+}
+
+function recordHistoryEvent(
+  historyStore: HistoryStore,
+  event: ServerEvent,
+): Promise<void> {
+  return historyStore.recordEvent(event).catch((error: unknown) => {
+    console.warn(
+      `History write failed for ${event.type}: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    );
+  });
 }
 
 function sendError(webSocket: WebSocket, error: unknown): void {
@@ -417,6 +580,19 @@ function parseOptionalNumber(value: string | null): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseLimit(value: string | null): number {
+  if (!value) {
+    return 20;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return 20;
+  }
+
+  return Math.min(parsed, 100);
 }
 
 function optionalQuery(url: URL, key: string): string | undefined {

@@ -18,6 +18,7 @@ describe('audio ingestion websocket', () => {
       port: 0,
       audioStorageDir: storageDir,
       maxAudioChunkBytes: 1024 * 1024,
+      databaseSsl: false,
       deepgramModel: 'nova-3',
       deepgramLanguage: 'en-US',
       factCheckEnabled: false,
@@ -29,6 +30,14 @@ describe('audio ingestion websocket', () => {
       roomToneGeminiModel: 'gemini-3.1-flash-lite',
       compromiseInitialDelayMs: 30_000,
       compromiseIntervalMs: 30_000,
+      fallacyDetectionEnabled: false,
+      fallacyAnalysisIntervalMs: 20_000,
+      fallacyMinConfidence: 'medium',
+      argumentRatingEnabled: false,
+      argumentRatingIntervalMs: 30_000,
+      argumentRatingMinTranscriptLines: 4,
+      refereeInterventionsEnabled: false,
+      refereeInterventionCooldownMs: 10_000,
     });
     port = await server.listen();
   });
@@ -46,6 +55,13 @@ describe('audio ingestion websocket', () => {
     const started = await waitForEvent(socket, 'session.started');
     expect(started.sessionId).toBe('test-session');
     expect(started.participantId).toBe('phone-1');
+    expect(started.refereeSettings).toMatchObject({
+      interventionStyle: 'balanced',
+      fallacySensitivity: 'medium',
+      factCheckStrictness: 'medium',
+      compromisePreference: 'balanced',
+      interventionFrequency: 'normal',
+    });
 
     socket.send(Buffer.from([1, 2, 3, 4]));
 
@@ -83,6 +99,32 @@ describe('audio ingestion websocket', () => {
 
     expect(response.status).toBe(200);
     expect(body.status).toBe('ok');
+  });
+
+  it('reports when history endpoints are disabled without DATABASE_URL', async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/sessions`);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(503);
+    expect(body.error).toBe('history_disabled');
+  });
+
+  it('accepts private referee settings from the websocket URL', async () => {
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${port}/v1/audio?sessionId=settings-session&participantId=phone-1&interventionStyle=direct&fallacySensitivity=low&factCheckStrictness=high&compromisePreference=fair&interventionFrequency=high`,
+    );
+
+    const started = await waitForEvent(socket, 'session.started');
+    expect(started.refereeSettings).toEqual({
+      interventionStyle: 'direct',
+      fallacySensitivity: 'low',
+      factCheckStrictness: 'high',
+      compromisePreference: 'fair',
+      interventionFrequency: 'high',
+    });
+
+    socket.send(JSON.stringify({ type: 'session.stop' }));
+    await waitForEvent(socket, 'session.ended');
   });
 });
 

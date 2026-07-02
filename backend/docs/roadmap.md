@@ -119,13 +119,110 @@ transcript.final
 Top-tier suggestions carry `quality: "really_good"` and `pushLevel: "urgent"`
 so the frontend can make the referee push them harder.
 
-## Phase 6: Session Storage
+## Phase 6: Logical Fallacy Detection
 
-Add a database and object storage.
+Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
+rolling final transcript window and emits conservative fallacy hints.
 
-Recommended:
+```text
+transcript.final
+  -> rolling transcript
+  -> Gemini Interactions API
+  -> fallacy.detected event
+```
 
-- Postgres for sessions, speakers, transcript lines, claims, and verdicts
+Example event:
+
+```json
+{
+  "type": "fallacy.detected",
+  "speaker": "speaker_0",
+  "speakerLabel": "PersonA",
+  "fallacy": "straw_man",
+  "confidence": "medium",
+  "severity": "moderate",
+  "quote": "So you are saying I should never have any free time.",
+  "suggestedRefereeResponse": "Pause there and restate the other person's actual point before responding."
+}
+```
+
+Only medium/high confidence detections are emitted by default.
+
+## Phase 7: Argument Ratings
+
+Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
+rolling final transcript window and emits neutral argument quality ratings.
+
+```text
+transcript.final
+  -> rolling transcript
+  -> Gemini Interactions API
+  -> argument.rating.updated event
+```
+
+The rating includes `overallScore`, dimension scores, short strengths, short
+risks, and one `refereeFocus` action for the live UI. It rates the conversation
+process, not which person is correct.
+
+## Phase 8: Private Referee Settings
+
+Current implementation. The mobile app can pass per-session referee settings as
+WebSocket query parameters.
+
+```text
+wss://.../v1/audio?interventionStyle=gentle&fallacySensitivity=medium&factCheckStrictness=high&compromisePreference=balanced&interventionFrequency=normal
+```
+
+Settings are included in the `session.started` event, stored in session history,
+and used by the referee intervention engine to tune wording, strictness,
+sensitivity, compromise framing, and frequency.
+
+## Phase 9: Referee Interventions
+
+Current implementation. The backend converts high-signal analysis events into
+short referee actions for the mobile app.
+
+```text
+claim.detected / fact_check.completed
+fallacy.detected
+compromise.suggested
+argument.rating.updated
+  -> referee.intervention.suggested event
+```
+
+The intervention event includes a category, priority, user-facing message,
+reason, and source event. This is intentionally rule-based so it adds no new API
+cost and stays fast enough for live use.
+
+## Phase 10: Session Storage
+
+Current implementation when `DATABASE_URL` is configured. The backend stores
+session history in Postgres while still keeping temporary raw audio files on
+disk, and exposes read endpoints for the app.
+
+Stored history:
+
+- sessions and streams
+- stream referee settings
+- speaker mappings
+- final transcript lines
+- detected claims
+- fact-check lifecycle events and results
+- fallacy detections
+- argument ratings
+- referee interventions
+- compromise suggestions
+- raw event JSON for future features
+
+Read endpoints:
+
+```text
+GET /v1/sessions
+GET /v1/sessions/:sessionId
+```
+
+Still recommended later:
+
 - S3-compatible object storage for raw audio files if replay is required
 
 The mobile app should still use the same backend API. Storage changes should not require a frontend rewrite.
