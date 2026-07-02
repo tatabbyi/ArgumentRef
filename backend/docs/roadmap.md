@@ -23,7 +23,7 @@ Purpose: prove that a phone can stream audio to an internet-hosted backend.
 
 ## Phase 2: Deepgram Streaming
 
-Add a transcription adapter inside the backend.
+Current implementation when `DEEPGRAM_API_KEY` is configured.
 
 ```text
 Mobile app

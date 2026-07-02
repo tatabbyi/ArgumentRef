@@ -18,6 +18,8 @@ describe('audio ingestion websocket', () => {
       port: 0,
       audioStorageDir: storageDir,
       maxAudioChunkBytes: 1024 * 1024,
+      deepgramModel: 'nova-3',
+      deepgramLanguage: 'en-US',
     });
     port = await server.listen();
   });

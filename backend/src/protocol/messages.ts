@@ -60,10 +60,47 @@ export type ServerEvent =
       storagePath: string;
     }
   | {
+      type: 'transcription.connected';
+      provider: 'deepgram';
+      sessionId: string;
+      streamId: string;
+      model: string;
+      language: string;
+    }
+  | {
+      type: 'transcription.disabled';
+      reason: string;
+    }
+  | {
+      type: 'transcription.error';
+      provider: 'deepgram';
+      message: string;
+    }
+  | {
+      type: 'transcript.partial' | 'transcript.final';
+      provider: 'deepgram';
+      sessionId: string;
+      streamId: string;
+      speaker: string;
+      text: string;
+      startMs?: number;
+      endMs?: number;
+      confidence?: number;
+      words: TranscriptWord[];
+    }
+  | {
       type: 'error';
       code: string;
       message: string;
     };
+
+export interface TranscriptWord {
+  word: string;
+  speaker: string;
+  startMs?: number;
+  endMs?: number;
+  confidence?: number;
+}
 
 export function parseClientControlMessage(data: string): ClientControlMessage {
   return clientControlMessageSchema.parse(JSON.parse(data));

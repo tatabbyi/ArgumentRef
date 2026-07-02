@@ -16,3 +16,7 @@ services:
         value: /tmp/argumentref-sessions
       - key: MAX_AUDIO_CHUNK_BYTES
         value: 1048576
+      - key: DEEPGRAM_MODEL
+        value: nova-3
+      - key: DEEPGRAM_LANGUAGE
+        value: en-US

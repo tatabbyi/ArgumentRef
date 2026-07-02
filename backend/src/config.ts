@@ -5,6 +5,9 @@ export interface AppConfig {
   port: number;
   audioStorageDir: string;
   maxAudioChunkBytes: number;
+  deepgramApiKey?: string;
+  deepgramModel: string;
+  deepgramLanguage: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -13,6 +16,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: readNumber(env.PORT, 8081),
     audioStorageDir: path.resolve(env.AUDIO_STORAGE_DIR ?? 'data/sessions'),
     maxAudioChunkBytes: readNumber(env.MAX_AUDIO_CHUNK_BYTES, 1024 * 1024),
+    deepgramApiKey: env.DEEPGRAM_API_KEY,
+    deepgramModel: env.DEEPGRAM_MODEL ?? 'nova-3',
+    deepgramLanguage: env.DEEPGRAM_LANGUAGE ?? 'en-US',
   };
 }
 

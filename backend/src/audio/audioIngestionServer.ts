@@ -8,10 +8,13 @@ import {
   parseClientControlMessage,
   serializeServerEvent,
   type AudioFormat,
-  type ClientControlMessage,
   type ServerEvent,
 } from '../protocol/messages.js';
 import { SessionStore, type AudioStreamRecorder } from '../sessions/sessionStore.js';
+import {
+  createDeepgramTranscriber,
+  type Transcriber,
+} from '../transcription/deepgramTranscriber.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
   encoding: 'unknown',
@@ -47,7 +50,7 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
   });
 
   webSocketServer.on('connection', (webSocket, request) => {
-    void handleAudioConnection(webSocket, request, sessionStore);
+    void handleAudioConnection(webSocket, request, sessionStore, config);
   });
 
   return {
@@ -103,12 +106,14 @@ async function handleAudioConnection(
   webSocket: WebSocket,
   request: IncomingMessage,
   sessionStore: SessionStore,
+  config: AppConfig,
 ): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+  const audio = audioFormatFromUrl(url);
   const recorder = await sessionStore.createAudioStream({
     sessionId: optionalQuery(url, 'sessionId'),
     participantId: optionalQuery(url, 'participantId'),
-    audio: audioFormatFromUrl(url),
+    audio,
   });
 
   sendEvent(webSocket, {
@@ -116,19 +121,31 @@ async function handleAudioConnection(
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
     participantId: recorder.participantId,
-    audio: audioFormatFromUrl(url),
+    audio,
     acceptedBinaryAudio: true,
   });
 
+  const transcriber = createDeepgramTranscriber(
+    config,
+    {
+      sessionId: recorder.sessionId,
+      streamId: recorder.streamId,
+      audio,
+    },
+    (event) => sendEvent(webSocket, event),
+  );
+
   webSocket.on('message', (data, isBinary) => {
-    void handleMessage(webSocket, recorder, data, isBinary);
+    void handleMessage(webSocket, recorder, transcriber, data, isBinary);
   });
 
   webSocket.on('close', () => {
+    transcriber.close();
     void recorder.close();
   });
 
   webSocket.on('error', () => {
+    transcriber.close();
     void recorder.close();
   });
 }
@@ -136,12 +153,15 @@ async function handleAudioConnection(
 async function handleMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
+  transcriber: Transcriber,
   data: WebSocket.RawData,
   isBinary: boolean,
 ): Promise<void> {
   try {
     if (isBinary) {
-      const snapshot = await recorder.writeChunk(rawDataToBuffer(data));
+      const audioChunk = rawDataToBuffer(data);
+      transcriber.sendAudio(audioChunk);
+      const snapshot = await recorder.writeChunk(audioChunk);
       sendEvent(webSocket, {
         type: 'audio.ack',
         sessionId: snapshot.sessionId,
@@ -152,7 +172,7 @@ async function handleMessage(
       return;
     }
 
-    await handleControlMessage(webSocket, recorder, data.toString('utf8'));
+    await handleControlMessage(webSocket, recorder, transcriber, data.toString('utf8'));
   } catch (error) {
     sendError(webSocket, error);
   }
@@ -161,6 +181,7 @@ async function handleMessage(
 async function handleControlMessage(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
+  transcriber: Transcriber,
   payload: string,
 ): Promise<void> {
   const message = parseClientControlMessage(payload);
@@ -181,7 +202,7 @@ async function handleControlMessage(
       sendAudioCommitted(webSocket, recorder);
       return;
     case 'session.stop':
-      await endSession(webSocket, recorder);
+      await endSession(webSocket, recorder, transcriber);
       return;
     default:
       assertNever(message);
@@ -191,7 +212,9 @@ async function handleControlMessage(
 async function endSession(
   webSocket: WebSocket,
   recorder: AudioStreamRecorder,
+  transcriber: Transcriber,
 ): Promise<void> {
+  transcriber.close();
   const snapshot = await recorder.close();
   sendEvent(webSocket, {
     type: 'session.ended',

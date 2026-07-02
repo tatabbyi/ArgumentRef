@@ -1,6 +1,6 @@
 # Argument Referee Backend
 
-This backend accepts live audio streams from the mobile app over WebSocket. It does not transcribe yet; it creates the ingestion boundary that will later feed Deepgram or another diarization provider.
+This backend accepts live audio streams from the mobile app over WebSocket. If `DEEPGRAM_API_KEY` is configured, it also forwards those audio chunks to Deepgram streaming speech-to-text and emits transcript events with speaker labels.
 
 Important: the phone should not depend on a laptop in real use. Running this service on `localhost` is only for development. For actual mobile testing outside your laptop, deploy this backend to a public host and connect the app to a `wss://.../v1/audio` URL.
 
@@ -64,6 +64,35 @@ The mobile client should then send audio chunks as binary WebSocket messages. Th
 }
 ```
 
+If Deepgram is enabled, the server also emits:
+
+```json
+{
+  "type": "transcription.connected",
+  "provider": "deepgram",
+  "sessionId": "demo-session",
+  "streamId": "...",
+  "model": "nova-3",
+  "language": "en-US"
+}
+```
+
+And transcript events:
+
+```json
+{
+  "type": "transcript.final",
+  "provider": "deepgram",
+  "sessionId": "demo-session",
+  "streamId": "...",
+  "speaker": "speaker_0",
+  "text": "The budget increased by 20 percent.",
+  "startMs": 12400,
+  "endMs": 15900,
+  "words": []
+}
+```
+
 To flush metadata without ending the connection, send:
 
 ```json
@@ -85,6 +114,9 @@ PORT=8081
 HOST=0.0.0.0
 AUDIO_STORAGE_DIR=data/sessions
 MAX_AUDIO_CHUNK_BYTES=1048576
+DEEPGRAM_API_KEY=
+DEEPGRAM_MODEL=nova-3
+DEEPGRAM_LANGUAGE=en-US
 ```
 
 ## Deploy to Render
@@ -141,7 +173,15 @@ DATABASE_URL=...
 PERPLEXITY_API_KEY=...
 ```
 
-Add these in Render's Environment tab when those integrations are implemented. Do not put them in the Flutter app.
+Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
+
+For the first mobile-to-Deepgram test, send raw PCM 16-bit mono audio:
+
+```text
+wss://argumentref-backend.onrender.com/v1/audio?sessionId=demo-session&participantId=device-1&encoding=pcm16&sampleRateHz=16000&channels=1
+```
+
+Deepgram diarization is enabled with `diarize_model=latest`.
 
 ## Fully On-Device Mode
 
@@ -159,4 +199,4 @@ npm test
 
 ## Next Step
 
-The next module should subscribe to these same audio chunks and forward them to Deepgram streaming transcription with diarization enabled. The frontend should consume normalized transcript events from the backend, not talk to the provider directly.
+The next module should detect claims from `transcript.final` events and queue them for fact-checking. The frontend should consume normalized transcript events from the backend, not talk to Deepgram directly.
