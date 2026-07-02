@@ -24,6 +24,9 @@ export interface AppConfig {
   fallacyDetectionEnabled: boolean;
   fallacyAnalysisIntervalMs: number;
   fallacyMinConfidence: FallacyConfidence;
+  argumentRatingEnabled: boolean;
+  argumentRatingIntervalMs: number;
+  argumentRatingMinTranscriptLines: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -61,6 +64,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     fallacyMinConfidence: readFallacyConfidence(
       env.FALLACY_MIN_CONFIDENCE,
       'medium',
+    ),
+    argumentRatingEnabled: readBoolean(env.ARGUMENT_RATING_ENABLED, true),
+    argumentRatingIntervalMs: readNumber(env.ARGUMENT_RATING_INTERVAL_MS, 30_000),
+    argumentRatingMinTranscriptLines: readNumber(
+      env.ARGUMENT_RATING_MIN_TRANSCRIPT_LINES,
+      4,
     ),
   };
 }

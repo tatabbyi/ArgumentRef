@@ -148,7 +148,23 @@ Example event:
 
 Only medium/high confidence detections are emitted by default.
 
-## Phase 7: Session Storage
+## Phase 7: Argument Ratings
+
+Current implementation when `GEMINI_API_KEY` is configured. The backend keeps a
+rolling final transcript window and emits neutral argument quality ratings.
+
+```text
+transcript.final
+  -> rolling transcript
+  -> Gemini Interactions API
+  -> argument.rating.updated event
+```
+
+The rating includes `overallScore`, dimension scores, short strengths, short
+risks, and one `refereeFocus` action for the live UI. It rates the conversation
+process, not which person is correct.
+
+## Phase 8: Session Storage
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on
@@ -162,6 +178,7 @@ Stored history:
 - detected claims
 - fact-check lifecycle events and results
 - fallacy detections
+- argument ratings
 - compromise suggestions
 - raw event JSON for future features
 

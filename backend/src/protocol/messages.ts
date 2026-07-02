@@ -161,6 +161,42 @@ export interface FallacyErrorEvent {
   message: string;
 }
 
+export interface ArgumentRatingDimensions {
+  clarity: number;
+  evidenceQuality: number;
+  logicalConsistency: number;
+  listening: number;
+  emotionalControl: number;
+  fairness: number;
+}
+
+export interface ArgumentRatingUpdatedEvent {
+  type: 'argument.rating.updated';
+  provider: 'gemini';
+  sessionId: string;
+  streamId: string;
+  model: string;
+  generatedAt: string;
+  transcriptLineCount: number;
+  overallScore: number;
+  dimensions: ArgumentRatingDimensions;
+  strengths: string[];
+  risks: string[];
+  refereeFocus: string;
+}
+
+export interface ArgumentRatingDisabledEvent {
+  type: 'argument.rating.disabled';
+  provider: 'gemini';
+  reason: 'disabled' | 'missing_gemini_api_key';
+}
+
+export interface ArgumentRatingErrorEvent {
+  type: 'argument.rating.error';
+  provider: 'gemini';
+  message: string;
+}
+
 export type ConversationDebriefStatus =
   | 'completed'
   | 'disabled'
@@ -315,6 +351,9 @@ export type ServerEvent =
   | FallacyDetectedEvent
   | FallacyDisabledEvent
   | FallacyErrorEvent
+  | ArgumentRatingUpdatedEvent
+  | ArgumentRatingDisabledEvent
+  | ArgumentRatingErrorEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent

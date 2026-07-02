@@ -32,6 +32,9 @@ describe('audio ingestion websocket', () => {
       fallacyDetectionEnabled: false,
       fallacyAnalysisIntervalMs: 20_000,
       fallacyMinConfidence: 'medium',
+      argumentRatingEnabled: false,
+      argumentRatingIntervalMs: 30_000,
+      argumentRatingMinTranscriptLines: 4,
     });
     port = await server.listen();
   });

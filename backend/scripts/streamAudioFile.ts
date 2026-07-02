@@ -105,6 +105,9 @@ function printEvent(event: ServerEvent): void {
     case 'fallacy.detected':
     case 'fallacy.disabled':
     case 'fallacy.error':
+    case 'argument.rating.updated':
+    case 'argument.rating.disabled':
+    case 'argument.rating.error':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;

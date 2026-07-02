@@ -188,6 +188,9 @@ COMPROMISE_INTERVAL_MS=30000
 FALLACY_DETECTION_ENABLED=true
 FALLACY_ANALYSIS_INTERVAL_MS=20000
 FALLACY_MIN_CONFIDENCE=medium
+ARGUMENT_RATING_ENABLED=true
+ARGUMENT_RATING_INTERVAL_MS=30000
+ARGUMENT_RATING_MIN_TRANSCRIPT_LINES=4
 ```
 
 ## Deploy to Render
@@ -246,7 +249,7 @@ GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
 Add `DEEPGRAM_API_KEY` in Render's Environment tab to activate transcription. Do not put it in the Flutter app.
-Add `GEMINI_API_KEY` there too to activate compromise suggestions, conversation debriefs, and logical fallacy detection. Do not put it in the Flutter app.
+Add `GEMINI_API_KEY` there too to activate compromise suggestions, conversation debriefs, logical fallacy detection, and argument ratings. Do not put it in the Flutter app.
 
 Add `GOOGLE_FACT_CHECK_API_KEY` in Render's Environment tab to activate published fact-check lookup. Do not put it in the Flutter app.
 
@@ -261,6 +264,7 @@ When `DATABASE_URL` is configured, the backend creates these tables automaticall
 - `detected_claims`
 - `fact_checks`
 - `fallacy_detections`
+- `argument_ratings`
 - `compromise_suggestions`
 - `speaker_mappings`
 
@@ -447,6 +451,35 @@ fallacy events:
 Only `medium` and `high` confidence detections are emitted by default. This is a
 referee hint, not a final judgment.
 
+## Test Argument Rating Events
+
+Argument ratings reuse `GEMINI_API_KEY`. No extra secret is required.
+
+The backend watches final transcript lines and periodically emits a neutral score
+for the argument process:
+
+```json
+{
+  "type": "argument.rating.updated",
+  "provider": "gemini",
+  "overallScore": 78,
+  "dimensions": {
+    "clarity": 82,
+    "evidenceQuality": 68,
+    "logicalConsistency": 76,
+    "listening": 70,
+    "emotionalControl": 84,
+    "fairness": 75
+  },
+  "strengths": ["Both speakers are naming practical constraints."],
+  "risks": ["Some claims still need concrete examples."],
+  "refereeFocus": "Ask each person for one specific example and one next step."
+}
+```
+
+This rates the conversation quality, not which person is right. It is intended as
+live guidance for the referee UI.
+
 ## Next Step
 
-The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, and emits conservative fallacy hints. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, and history data from the backend.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, and rates argument quality. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, and history data from the backend.

@@ -46,3 +46,9 @@ services:
         value: 20000
       - key: FALLACY_MIN_CONFIDENCE
         value: medium
+      - key: ARGUMENT_RATING_ENABLED
+        value: true
+      - key: ARGUMENT_RATING_INTERVAL_MS
+        value: 30000
+      - key: ARGUMENT_RATING_MIN_TRANSCRIPT_LINES
+        value: 4

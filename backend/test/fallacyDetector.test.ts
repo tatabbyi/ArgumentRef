@@ -149,6 +149,9 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     fallacyDetectionEnabled: true,
     fallacyAnalysisIntervalMs: 20_000,
     fallacyMinConfidence: 'medium',
+    argumentRatingEnabled: false,
+    argumentRatingIntervalMs: 30_000,
+    argumentRatingMinTranscriptLines: 4,
     ...overrides,
   };
 }

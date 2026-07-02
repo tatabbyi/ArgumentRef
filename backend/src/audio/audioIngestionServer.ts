@@ -24,6 +24,7 @@ import {
   createHistoryStore,
   type HistoryStore,
 } from '../history/historyStore.js';
+import { ArgumentRater } from '../ratings/argumentRater.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
 const DEFAULT_AUDIO: AudioFormat = {
@@ -230,6 +231,12 @@ async function handleAudioConnection(
     config,
     emit: emitClientEvent,
   });
+  const argumentRater = new ArgumentRater({
+    sessionId: recorder.sessionId,
+    streamId: recorder.streamId,
+    config,
+    emit: emitClientEvent,
+  });
   const compromiseAdvisor = new CompromiseAdvisor({
     sessionId: recorder.sessionId,
     streamId: recorder.streamId,
@@ -260,6 +267,7 @@ async function handleAudioConnection(
 
       if (labelled.event.type === 'transcript.final') {
         fallacyDetector.recordTranscript(labelled.event);
+        argumentRater.recordTranscript(labelled.event);
         compromiseAdvisor.recordTranscript(labelled.event);
         debriefer.recordTranscript(labelled.event);
         const claim = claimDetector.detect(labelled.event);
@@ -285,6 +293,7 @@ async function handleAudioConnection(
   });
   compromiseAdvisor.start();
   fallacyDetector.start();
+  argumentRater.start();
 
   const transcriber = createDeepgramTranscriber(
     config,
@@ -302,6 +311,7 @@ async function handleAudioConnection(
       recorder,
       transcriber,
       fallacyDetector,
+      argumentRater,
       compromiseAdvisor,
       debriefer,
       historyStore,
@@ -400,12 +410,14 @@ async function endSession(options: {
   recorder: AudioStreamRecorder;
   transcriber: Transcriber;
   fallacyDetector: FallacyDetector;
+  argumentRater: ArgumentRater;
   compromiseAdvisor: CompromiseAdvisor;
   debriefer: ConversationDebriefer;
   historyStore: HistoryStore;
   sendEnded: boolean;
 }): Promise<void> {
   options.fallacyDetector.close();
+  options.argumentRater.close();
   options.compromiseAdvisor.close();
   options.transcriber.close();
   const snapshot = await options.recorder.close();
