@@ -123,7 +123,7 @@ so the frontend can make the referee push them harder.
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on
-disk.
+disk, and exposes read endpoints for the app.
 
 Stored history:
 
@@ -135,9 +135,15 @@ Stored history:
 - compromise suggestions
 - raw event JSON for future features
 
+Read endpoints:
+
+```text
+GET /v1/sessions
+GET /v1/sessions/:sessionId
+```
+
 Still recommended later:
 
 - S3-compatible object storage for raw audio files if replay is required
-- API endpoints for browsing history from the mobile app
 
 The mobile app should still use the same backend API. Storage changes should not require a frontend rewrite.

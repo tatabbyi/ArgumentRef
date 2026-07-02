@@ -84,6 +84,14 @@ describe('audio ingestion websocket', () => {
     expect(response.status).toBe(200);
     expect(body.status).toBe('ok');
   });
+
+  it('reports when history endpoints are disabled without DATABASE_URL', async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/sessions`);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(503);
+    expect(body.error).toBe('history_disabled');
+  });
 });
 
 function waitForEvent<TType extends ServerEvent['type']>(

@@ -39,7 +39,9 @@ export interface AudioIngestionServer {
 export function createAudioIngestionServer(config: AppConfig): AudioIngestionServer {
   const sessionStore = new SessionStore(config.audioStorageDir);
   const historyStore = createHistoryStore(config);
-  const httpServer = createServer(handleHttpRequest);
+  const httpServer = createServer((request, response) => {
+    void handleHttpRequest(request, response, historyStore);
+  });
   const webSocketServer = new WebSocketServer({
     noServer: true,
     maxPayload: config.maxAudioChunkBytes,
@@ -98,8 +100,14 @@ export function createAudioIngestionServer(config: AppConfig): AudioIngestionSer
   };
 }
 
-function handleHttpRequest(request: IncomingMessage, response: ServerResponse): void {
-  if (request.url === '/health') {
+async function handleHttpRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  historyStore: HistoryStore,
+): Promise<void> {
+  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+
+  if (url.pathname === '/health') {
     sendJson(response, 200, {
       status: 'ok',
       service: 'argumentref-backend',
@@ -107,10 +115,92 @@ function handleHttpRequest(request: IncomingMessage, response: ServerResponse): 
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/v1/sessions') {
+    await sendSessionList(response, historyStore, url);
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/sessions/')) {
+    await sendSessionDetail(response, historyStore, url);
+    return;
+  }
+
   sendJson(response, 404, {
     error: 'not_found',
-    message: 'Use /health or connect WebSocket clients to /v1/audio.',
+    message:
+      'Use /health, GET /v1/sessions, GET /v1/sessions/:sessionId, or connect WebSocket clients to /v1/audio.',
   });
+}
+
+async function sendSessionList(
+  response: ServerResponse,
+  historyStore: HistoryStore,
+  url: URL,
+): Promise<void> {
+  if (!historyStore.isEnabled()) {
+    sendJson(response, 503, {
+      error: 'history_disabled',
+      message: 'Set DATABASE_URL on the backend to enable session history.',
+    });
+    return;
+  }
+
+  try {
+    const limit = parseLimit(url.searchParams.get('limit'));
+    const sessions = await historyStore.listSessions(limit);
+    sendJson(response, 200, {
+      sessions,
+      limit,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: 'history_query_failed',
+      message: error instanceof Error ? error.message : 'Failed to query session history.',
+    });
+  }
+}
+
+async function sendSessionDetail(
+  response: ServerResponse,
+  historyStore: HistoryStore,
+  url: URL,
+): Promise<void> {
+  if (!historyStore.isEnabled()) {
+    sendJson(response, 503, {
+      error: 'history_disabled',
+      message: 'Set DATABASE_URL on the backend to enable session history.',
+    });
+    return;
+  }
+
+  const sessionId = decodeURIComponent(url.pathname.slice('/v1/sessions/'.length));
+  if (!sessionId) {
+    sendJson(response, 400, {
+      error: 'invalid_session_id',
+      message: 'Session ID is required.',
+    });
+    return;
+  }
+
+  try {
+    const session = await historyStore.getSession(sessionId);
+    if (!session) {
+      sendJson(response, 404, {
+        error: 'session_not_found',
+        message: `No session history found for ${sessionId}.`,
+      });
+      return;
+    }
+
+    sendJson(response, 200, {
+      session,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: 'history_query_failed',
+      message: error instanceof Error ? error.message : 'Failed to query session history.',
+    });
+  }
 }
 
 async function handleAudioConnection(
@@ -425,6 +515,19 @@ function parseOptionalNumber(value: string | null): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseLimit(value: string | null): number {
+  if (!value) {
+    return 20;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return 20;
+  }
+
+  return Math.min(parsed, 100);
 }
 
 function optionalQuery(url: URL, key: string): string | undefined {

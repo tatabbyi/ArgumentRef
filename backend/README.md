@@ -260,6 +260,42 @@ When `DATABASE_URL` is configured, the backend creates these tables automaticall
 - `compromise_suggestions`
 - `speaker_mappings`
 
+## History API
+
+After `DATABASE_URL` is configured and at least one session has produced history
+events, the backend exposes session history over HTTP.
+
+List recent sessions:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions
+```
+
+Optional limit, capped at 100:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions?limit=20
+```
+
+Read one session:
+
+```sh
+curl https://argumentref-backend.onrender.com/v1/sessions/demo-session
+```
+
+If `DATABASE_URL` is not configured, these endpoints return:
+
+```json
+{
+  "error": "history_disabled",
+  "message": "Set DATABASE_URL on the backend to enable session history."
+}
+```
+
+The session detail response includes streams, speaker mappings, final transcript
+lines, detected claims, fact-check events, compromise suggestions, and raw stored
+events.
+
 For the first mobile-to-Deepgram test, send raw PCM 16-bit mono audio:
 
 ```text
