@@ -52,3 +52,7 @@ services:
         value: 30000
       - key: ARGUMENT_RATING_MIN_TRANSCRIPT_LINES
         value: 4
+      - key: REFEREE_INTERVENTIONS_ENABLED
+        value: true
+      - key: REFEREE_INTERVENTION_COOLDOWN_MS
+        value: 10000

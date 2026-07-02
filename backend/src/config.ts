@@ -27,6 +27,8 @@ export interface AppConfig {
   argumentRatingEnabled: boolean;
   argumentRatingIntervalMs: number;
   argumentRatingMinTranscriptLines: number;
+  refereeInterventionsEnabled: boolean;
+  refereeInterventionCooldownMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -71,6 +73,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.ARGUMENT_RATING_MIN_TRANSCRIPT_LINES,
       4,
     ),
+    refereeInterventionsEnabled: readBoolean(
+      env.REFEREE_INTERVENTIONS_ENABLED,
+      true,
+    ),
+    refereeInterventionCooldownMs: readNonNegativeNumber(
+      env.REFEREE_INTERVENTION_COOLDOWN_MS,
+      10_000,
+    ),
   };
 }
 
@@ -89,6 +99,15 @@ function readBoolean(value: string | undefined, fallback: boolean): boolean {
   }
 
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function readNonNegativeNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function databaseUrlRequestsSsl(value: string | undefined): boolean {

@@ -197,6 +197,37 @@ export interface ArgumentRatingErrorEvent {
   message: string;
 }
 
+export type RefereeInterventionCategory =
+  | 'factual'
+  | 'logic'
+  | 'compromise'
+  | 'argument_quality';
+
+export type RefereeInterventionPriority = 'low' | 'medium' | 'high';
+
+export type RefereeInterventionSourceEvent =
+  | 'claim.detected'
+  | 'fact_check.completed'
+  | 'fallacy.detected'
+  | 'compromise.suggested'
+  | 'argument.rating.updated';
+
+export interface RefereeInterventionSuggestedEvent {
+  type: 'referee.intervention.suggested';
+  sessionId: string;
+  streamId: string;
+  interventionId: string;
+  generatedAt: string;
+  category: RefereeInterventionCategory;
+  priority: RefereeInterventionPriority;
+  message: string;
+  reason: string;
+  sourceEvent: RefereeInterventionSourceEvent;
+  sourceId?: string;
+  speaker?: string;
+  speakerLabel?: string;
+}
+
 export type ConversationDebriefStatus =
   | 'completed'
   | 'disabled'
@@ -354,6 +385,7 @@ export type ServerEvent =
   | ArgumentRatingUpdatedEvent
   | ArgumentRatingDisabledEvent
   | ArgumentRatingErrorEvent
+  | RefereeInterventionSuggestedEvent
   | SpeakerDiarizationStatusEvent
   | SpeakerMappedEvent
   | FactCheckStartedEvent

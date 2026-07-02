@@ -108,6 +108,7 @@ function printEvent(event: ServerEvent): void {
     case 'argument.rating.updated':
     case 'argument.rating.disabled':
     case 'argument.rating.error':
+    case 'referee.intervention.suggested':
     case 'session.ended':
       console.log(JSON.stringify(event));
       return;

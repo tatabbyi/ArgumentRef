@@ -35,6 +35,8 @@ describe('audio ingestion websocket', () => {
       argumentRatingEnabled: false,
       argumentRatingIntervalMs: 30_000,
       argumentRatingMinTranscriptLines: 4,
+      refereeInterventionsEnabled: false,
+      refereeInterventionCooldownMs: 10_000,
     });
     port = await server.listen();
   });

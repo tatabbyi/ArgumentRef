@@ -24,6 +24,7 @@ import {
   createHistoryStore,
   type HistoryStore,
 } from '../history/historyStore.js';
+import { RefereeInterventionEngine } from '../interventions/refereeInterventionEngine.js';
 import { ArgumentRater } from '../ratings/argumentRater.js';
 import { parseSpeakerLabels, SpeakerLabeler } from '../speakers/speakerLabeler.js';
 
@@ -221,9 +222,18 @@ async function handleAudioConnection(
   });
   const claimDetector = new ClaimDetector();
   const factCheckService = createFactCheckService(config);
-  const emitClientEvent = (event: ServerEvent) => {
+  const interventionEngine = new RefereeInterventionEngine({ config });
+  const sendAndRecordClientEvent = (event: ServerEvent) => {
     sendEvent(webSocket, event);
     recordHistoryEvent(historyStore, event);
+  };
+  const emitClientEvent = (event: ServerEvent) => {
+    sendAndRecordClientEvent(event);
+
+    const intervention = interventionEngine.observe(event);
+    if (intervention) {
+      sendAndRecordClientEvent(intervention);
+    }
   };
   const fallacyDetector = new FallacyDetector({
     sessionId: recorder.sessionId,

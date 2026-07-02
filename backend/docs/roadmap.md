@@ -164,7 +164,24 @@ The rating includes `overallScore`, dimension scores, short strengths, short
 risks, and one `refereeFocus` action for the live UI. It rates the conversation
 process, not which person is correct.
 
-## Phase 8: Session Storage
+## Phase 8: Referee Interventions
+
+Current implementation. The backend converts high-signal analysis events into
+short referee actions for the mobile app.
+
+```text
+claim.detected / fact_check.completed
+fallacy.detected
+compromise.suggested
+argument.rating.updated
+  -> referee.intervention.suggested event
+```
+
+The intervention event includes a category, priority, user-facing message,
+reason, and source event. This is intentionally rule-based so it adds no new API
+cost and stays fast enough for live use.
+
+## Phase 9: Session Storage
 
 Current implementation when `DATABASE_URL` is configured. The backend stores
 session history in Postgres while still keeping temporary raw audio files on
@@ -179,6 +196,7 @@ Stored history:
 - fact-check lifecycle events and results
 - fallacy detections
 - argument ratings
+- referee interventions
 - compromise suggestions
 - raw event JSON for future features
 

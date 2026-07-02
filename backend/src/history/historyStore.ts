@@ -10,6 +10,7 @@ import type {
   FactCheckSkippedEvent,
   FactCheckStartedEvent,
   FallacyDetectedEvent,
+  RefereeInterventionSuggestedEvent,
   ServerEvent,
   SpeakerMappedEvent,
   TranscriptFinalEvent,
@@ -27,6 +28,7 @@ type HistoryEvent =
   | FallacyDetectedEvent
   | ArgumentRatingUpdatedEvent
   | CompromiseSuggestedEvent
+  | RefereeInterventionSuggestedEvent
   | SpeakerMappedEvent;
 
 export interface HistoryStore {
@@ -49,6 +51,7 @@ export interface HistorySessionSummary {
   factCheckCount: number;
   fallacyCount: number;
   argumentRatingCount: number;
+  interventionCount: number;
   compromiseCount: number;
   debriefStatus?: string;
 }
@@ -61,6 +64,7 @@ export interface HistorySessionDetail extends HistorySessionSummary {
   factChecks: HistoryFactCheck[];
   fallacies: HistoryFallacyDetection[];
   argumentRatings: HistoryArgumentRating[];
+  interventions: HistoryRefereeIntervention[];
   compromises: HistoryCompromiseSuggestion[];
   events: HistoryRawEvent[];
 }
@@ -167,6 +171,22 @@ export interface HistoryArgumentRating {
   createdAt: string;
 }
 
+export interface HistoryRefereeIntervention {
+  id: number;
+  streamId: string;
+  interventionId: string;
+  generatedAt: string;
+  category: string;
+  priority: string;
+  message: string;
+  reason: string;
+  sourceEvent: string;
+  sourceId?: string;
+  speaker?: string;
+  speakerLabel?: string;
+  createdAt: string;
+}
+
 export interface HistoryRawEvent {
   id: number;
   streamId?: string;
@@ -241,6 +261,7 @@ class PostgresHistoryStore implements HistoryStore {
           COUNT(DISTINCT fc.id)::int AS fact_check_count,
           COUNT(DISTINCT fd.id)::int AS fallacy_count,
           COUNT(DISTINCT ar.id)::int AS argument_rating_count,
+          COUNT(DISTINCT ri.id)::int AS intervention_count,
           COUNT(DISTINCT cs.id)::int AS compromise_count,
           MAX(st.debrief_status) AS debrief_status
         FROM history_sessions s
@@ -250,6 +271,7 @@ class PostgresHistoryStore implements HistoryStore {
         LEFT JOIN fact_checks fc ON fc.session_id = s.session_id
         LEFT JOIN fallacy_detections fd ON fd.session_id = s.session_id
         LEFT JOIN argument_ratings ar ON ar.session_id = s.session_id
+        LEFT JOIN referee_interventions ri ON ri.session_id = s.session_id
         LEFT JOIN compromise_suggestions cs ON cs.session_id = s.session_id
         GROUP BY s.session_id, s.created_at, s.updated_at
         ORDER BY s.updated_at DESC
@@ -277,6 +299,7 @@ class PostgresHistoryStore implements HistoryStore {
           COUNT(DISTINCT fc.id)::int AS fact_check_count,
           COUNT(DISTINCT fd.id)::int AS fallacy_count,
           COUNT(DISTINCT ar.id)::int AS argument_rating_count,
+          COUNT(DISTINCT ri.id)::int AS intervention_count,
           COUNT(DISTINCT cs.id)::int AS compromise_count,
           MAX(st.debrief_status) AS debrief_status
         FROM history_sessions s
@@ -286,6 +309,7 @@ class PostgresHistoryStore implements HistoryStore {
         LEFT JOIN fact_checks fc ON fc.session_id = s.session_id
         LEFT JOIN fallacy_detections fd ON fd.session_id = s.session_id
         LEFT JOIN argument_ratings ar ON ar.session_id = s.session_id
+        LEFT JOIN referee_interventions ri ON ri.session_id = s.session_id
         LEFT JOIN compromise_suggestions cs ON cs.session_id = s.session_id
         WHERE s.session_id = $1
         GROUP BY s.session_id, s.created_at, s.updated_at
@@ -306,6 +330,7 @@ class PostgresHistoryStore implements HistoryStore {
       factChecks,
       fallacies,
       argumentRatings,
+      interventions,
       compromises,
       events,
     ] = await Promise.all([
@@ -372,6 +397,15 @@ class PostgresHistoryStore implements HistoryStore {
         `,
         [sessionId],
       ),
+      this.pool.query<RefereeInterventionRow>(
+        `
+          SELECT *
+          FROM referee_interventions
+          WHERE session_id = $1
+          ORDER BY created_at ASC, id ASC
+        `,
+        [sessionId],
+      ),
       this.pool.query<CompromiseRow>(
         `
           SELECT *
@@ -402,6 +436,7 @@ class PostgresHistoryStore implements HistoryStore {
       factChecks: factChecks.rows.map(toFactCheck),
       fallacies: fallacies.rows.map(toFallacy),
       argumentRatings: argumentRatings.rows.map(toArgumentRating),
+      interventions: interventions.rows.map(toRefereeIntervention),
       compromises: compromises.rows.map(toCompromise),
       events: events.rows.map(toRawEvent),
     };
@@ -541,6 +576,28 @@ class PostgresHistoryStore implements HistoryStore {
       CREATE INDEX IF NOT EXISTS argument_ratings_session_created_idx
         ON argument_ratings(session_id, created_at ASC);
 
+      CREATE TABLE IF NOT EXISTS referee_interventions (
+        id BIGSERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        stream_id TEXT NOT NULL,
+        intervention_id TEXT NOT NULL,
+        generated_at TIMESTAMPTZ NOT NULL,
+        category TEXT NOT NULL,
+        priority TEXT NOT NULL,
+        message TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        source_event TEXT NOT NULL,
+        source_id TEXT,
+        speaker TEXT,
+        speaker_label TEXT,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE(stream_id, intervention_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS referee_interventions_session_created_idx
+        ON referee_interventions(session_id, created_at ASC);
+
       CREATE TABLE IF NOT EXISTS compromise_suggestions (
         id BIGSERIAL PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -601,6 +658,9 @@ class PostgresHistoryStore implements HistoryStore {
         return;
       case 'compromise.suggested':
         await this.persistCompromiseSuggested(event);
+        return;
+      case 'referee.intervention.suggested':
+        await this.persistRefereeIntervention(event);
         return;
       case 'speaker.mapped':
         await this.persistSpeakerMapped(event);
@@ -922,6 +982,48 @@ class PostgresHistoryStore implements HistoryStore {
     );
   }
 
+  private async persistRefereeIntervention(
+    event: RefereeInterventionSuggestedEvent,
+  ): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO referee_interventions (
+          session_id,
+          stream_id,
+          intervention_id,
+          generated_at,
+          category,
+          priority,
+          message,
+          reason,
+          source_event,
+          source_id,
+          speaker,
+          speaker_label,
+          payload
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+        ON CONFLICT (stream_id, intervention_id)
+        DO NOTHING
+      `,
+      [
+        event.sessionId,
+        event.streamId,
+        event.interventionId,
+        event.generatedAt,
+        event.category,
+        event.priority,
+        event.message,
+        event.reason,
+        event.sourceEvent,
+        event.sourceId,
+        event.speaker,
+        event.speakerLabel,
+        JSON.stringify(event),
+      ],
+    );
+  }
+
   private async persistSpeakerMapped(event: SpeakerMappedEvent): Promise<void> {
     await this.pool.query(
       `
@@ -962,6 +1064,7 @@ function shouldPersist(event: ServerEvent): event is HistoryEvent {
     event.type === 'fallacy.detected' ||
     event.type === 'argument.rating.updated' ||
     event.type === 'compromise.suggested' ||
+    event.type === 'referee.intervention.suggested' ||
     event.type === 'speaker.mapped'
   );
 }
@@ -986,6 +1089,7 @@ interface SessionSummaryRow extends QueryResultRow {
   fact_check_count: number;
   fallacy_count: number;
   argument_rating_count: number;
+  intervention_count: number;
   compromise_count: number;
   debrief_status: string | null;
 }
@@ -1092,6 +1196,22 @@ interface ArgumentRatingRow extends QueryResultRow {
   created_at: Date;
 }
 
+interface RefereeInterventionRow extends QueryResultRow {
+  id: string | number;
+  stream_id: string;
+  intervention_id: string;
+  generated_at: Date | string;
+  category: string;
+  priority: string;
+  message: string;
+  reason: string;
+  source_event: string;
+  source_id: string | null;
+  speaker: string | null;
+  speaker_label: string | null;
+  created_at: Date;
+}
+
 interface RawEventRow extends QueryResultRow {
   id: string | number;
   stream_id: string | null;
@@ -1113,6 +1233,7 @@ function toSessionSummary(row: SessionSummaryRow): HistorySessionSummary {
     factCheckCount: Number(row.fact_check_count),
     fallacyCount: Number(row.fallacy_count),
     argumentRatingCount: Number(row.argument_rating_count),
+    interventionCount: Number(row.intervention_count),
     compromiseCount: Number(row.compromise_count),
     debriefStatus: row.debrief_status ?? undefined,
   };
@@ -1232,6 +1353,26 @@ function toArgumentRating(row: ArgumentRatingRow): HistoryArgumentRating {
     strengths: row.strengths,
     risks: row.risks,
     refereeFocus: row.referee_focus,
+    createdAt: toIso(row.created_at),
+  };
+}
+
+function toRefereeIntervention(
+  row: RefereeInterventionRow,
+): HistoryRefereeIntervention {
+  return {
+    id: Number(row.id),
+    streamId: row.stream_id,
+    interventionId: row.intervention_id,
+    generatedAt: toIso(row.generated_at),
+    category: row.category,
+    priority: row.priority,
+    message: row.message,
+    reason: row.reason,
+    sourceEvent: row.source_event,
+    sourceId: row.source_id ?? undefined,
+    speaker: row.speaker ?? undefined,
+    speakerLabel: row.speaker_label ?? undefined,
     createdAt: toIso(row.created_at),
   };
 }

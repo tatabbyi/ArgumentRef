@@ -191,6 +191,8 @@ FALLACY_MIN_CONFIDENCE=medium
 ARGUMENT_RATING_ENABLED=true
 ARGUMENT_RATING_INTERVAL_MS=30000
 ARGUMENT_RATING_MIN_TRANSCRIPT_LINES=4
+REFEREE_INTERVENTIONS_ENABLED=true
+REFEREE_INTERVENTION_COOLDOWN_MS=10000
 ```
 
 ## Deploy to Render
@@ -265,6 +267,7 @@ When `DATABASE_URL` is configured, the backend creates these tables automaticall
 - `fact_checks`
 - `fallacy_detections`
 - `argument_ratings`
+- `referee_interventions`
 - `compromise_suggestions`
 - `speaker_mappings`
 
@@ -480,6 +483,28 @@ for the argument process:
 This rates the conversation quality, not which person is right. It is intended as
 live guidance for the referee UI.
 
+## Test Referee Intervention Events
+
+Referee interventions do not need another API key. They convert existing backend
+events into one concise action the UI can surface.
+
+Example:
+
+```json
+{
+  "type": "referee.intervention.suggested",
+  "category": "logic",
+  "priority": "medium",
+  "message": "Pause there and restate the other person's actual point before responding.",
+  "reason": "PersonA may be using straw man: This may exaggerate the other person's position.",
+  "sourceEvent": "fallacy.detected"
+}
+```
+
+The engine currently listens to detected claims, completed fact-checks, fallacy
+detections, compromise suggestions, and low argument ratings. It uses
+`REFEREE_INTERVENTION_COOLDOWN_MS` to avoid repeated prompts in the same category.
+
 ## Next Step
 
-The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, and rates argument quality. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, and history data from the backend.
+The backend now detects checkable claims, fact-checks them when configured, suggests compromises, stores history, emits conservative fallacy hints, rates argument quality, and turns those signals into referee intervention suggestions. The frontend should consume normalized transcript, claim, fact-check, compromise, fallacy, rating, intervention, and history data from the backend.
