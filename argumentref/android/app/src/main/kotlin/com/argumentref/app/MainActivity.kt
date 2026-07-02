@@ -1,4 +1,4 @@
-package com.example.argumentref
+package com.argumentref.app
 
 import io.flutter.embedding.android.FlutterActivity
 
