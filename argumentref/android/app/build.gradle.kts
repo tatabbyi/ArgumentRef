@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.argumentref.app"
+    namespace = "com.example.argumentref"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,8 +20,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.argumentref.app"
-        minSdk = 21
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.example.argumentref"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -29,6 +32,7 @@ android {
 
     buildTypes {
         release {
+            // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
