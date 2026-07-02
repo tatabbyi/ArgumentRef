@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../audio/audio_session.dart';
 import '../audio/compromise_sound_player.dart';
 import '../audio/live_ref_controller.dart';
+import '../audio/ref_voice.dart';
 import '../center_ref/center_ref_screen.dart';
 import '../center_ref/referee_guide.dart';
 import '../center_ref/volume_wave.dart';
@@ -124,6 +125,10 @@ class _CalibrationScreenState extends State<CalibrationScreen>
       leftName: widget.leftName,
       rightName: widget.rightName,
       compromiseSoundPlayer: RefereeWhistlePlayer(),
+      // Attached now but left muted (voiceEnabled defaults to false) so the ref
+      // stays quiet during calibration; the conversation screen turns it on
+      // once this controller is handed off in _finish().
+      voice: ElevenLabsRefVoice(),
     );
     controller.addListener(_onLive);
     _live = controller;

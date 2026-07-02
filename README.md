@@ -95,8 +95,8 @@ And transcript events:
 }
 ```
 
-If Gemini is enabled, the backend watches the final transcript after one
-minute, then every 30 seconds, and emits ranked compromise ideas:
+If Gemini is enabled, the backend watches the final transcript after 20 seconds,
+then every 30 seconds, and emits ranked compromise ideas:
 
 ```json
 {
@@ -185,7 +185,7 @@ GOOGLE_FACT_CHECK_PAGE_SIZE=3
 FACT_CHECK_MAX_CLAIMS_PER_SESSION=5
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
-COMPROMISE_INITIAL_DELAY_MS=60000
+COMPROMISE_INITIAL_DELAY_MS=20000
 COMPROMISE_INTERVAL_MS=30000
 FALLACY_DETECTION_ENABLED=true
 FALLACY_ANALYSIS_INTERVAL_MS=20000

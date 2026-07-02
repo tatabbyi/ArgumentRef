@@ -1,6 +1,7 @@
 import 'package:argumentref/audio/live_ref_controller.dart';
 import 'package:argumentref/audio/compromise_sound_player.dart';
 import 'package:argumentref/audio/ref_events.dart';
+import 'package:argumentref/audio/ref_voice.dart';
 import 'package:argumentref/center_ref/beats.dart';
 import 'package:argumentref/config/backend_config.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -414,10 +415,143 @@ void main() {
       expect(tone.score, 84);
       expect(tone.isHeated, isTrue);
       expect(tone.hasAiSignal, isTrue);
+      expect(tone.speaker, Speaker.left);
+    });
+  });
+
+  group('LiveRefController voice', () {
+    // A cut-in flag ("Let Ada finish") is a real referee call, so it's read
+    // aloud — here with the pause/cooldown gates opened so the assertion is
+    // deterministic.
+    LiveRefController controllerWith(
+      _FakeRefVoice voice, {
+      Duration cooldown = Duration.zero,
+      Duration settle = Duration.zero,
+    }) {
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+        voice: voice,
+        voiceCooldown: cooldown,
+        voiceSettle: settle,
+      );
+      c.voiceEnabled = true;
+      return c;
+    }
+
+    const cutIn = InterruptionDetectedEvent(
+      interrupter: 'speaker_1',
+      interrupterLabel: 'Ben',
+      interrupted: 'speaker_0',
+      interruptedLabel: 'Ada',
+      interrupterText: 'No that is not fair',
+      interruptedText: 'I was trying to explain this because',
+      overlapMs: 450,
+      gapMs: 0,
+      confidence: 0.84,
+      reason: 'speaker_overlap',
+    );
+
+    const compromise = CompromiseSuggestedEvent(
+      model: 'gemini-3.5-flash',
+      generatedAt: '2026-07-02T12:00:00Z',
+      transcriptLineCount: 4,
+      suggestions: [
+        CompromiseSuggestion(
+          id: 'compromise-1',
+          rank: 1,
+          title: 'Two-week trial',
+          summary: 'Try the plan for two weeks and review it.',
+          whyItCouldWork: 'It lowers the risk for both people.',
+          score: 94,
+          quality: CompromiseQuality.reallyGood,
+          pushLevel: CompromisePushLevel.urgent,
+        ),
+      ],
+    );
+
+    test('reads a real intervention aloud, naming the person', () {
+      final voice = _FakeRefVoice();
+      final c = controllerWith(voice);
+      addTearDown(c.dispose);
+
+      c.onEventForTest(cutIn);
+
+      // Tokens are filled in before speaking — the ref names the person.
+      expect(voice.spoken, ['Let Ada finish']);
+    });
+
+    test('does not read routine turn cues aloud', () {
+      final voice = _FakeRefVoice();
+      final c = controllerWith(voice);
+      addTearDown(c.dispose);
+
+      // A plain hand-off ("Go on, Ada") is shown but never spoken — this is what
+      // used to make the ref talk over everyone as the floor changed hands.
+      c.onEventForTest(
+        const TranscriptEvent(
+          isFinal: true,
+          speaker: 'speaker_0',
+          text: 'hello there, let me explain my side of this',
+        ),
+      );
+
+      expect(voice.spoken, isEmpty);
+    });
+
+    test('waits for a natural break before speaking', () {
+      final voice = _FakeRefVoice();
+      // A long settle means the floor was just active, so the ref holds its call.
+      final c = controllerWith(voice, settle: const Duration(seconds: 30));
+      addTearDown(c.dispose);
+
+      c.onEventForTest(cutIn);
+
+      expect(voice.spoken, isEmpty);
+    });
+
+    test('does not fire two calls back-to-back within the cooldown', () {
+      final voice = _FakeRefVoice();
+      final c = controllerWith(voice, cooldown: const Duration(minutes: 5));
+      addTearDown(c.dispose);
+
+      c.onEventForTest(cutIn); // "Let Ada finish" — spoken
+      c.onEventForTest(compromise); // "Try this deal now: …" — inside cooldown
+
+      expect(voice.spoken, ['Let Ada finish']);
+    });
+
+    test('stays silent until voice is enabled (e.g. during calibration)', () {
+      final voice = _FakeRefVoice();
+      final c = LiveRefController(
+        leftName: 'Ada',
+        rightName: 'Ben',
+        sessionId: 'test-session',
+        participantId: 'test-participant',
+        voice: voice,
+        voiceCooldown: Duration.zero,
+        voiceSettle: Duration.zero,
+      );
+      addTearDown(c.dispose);
+
+      c.onEventForTest(cutIn);
+
+      expect(voice.spoken, isEmpty);
     });
   });
 
   group('BackendConfig', () {
+    test('derives an https origin for REST endpoints from the ws origin', () {
+      // Default ws origin is wss://…; the speech endpoint must ride https://.
+      expect(BackendConfig.httpOrigin, startsWith('https://'));
+      expect(
+        BackendConfig.speechUri().toString(),
+        BackendConfig.httpOrigin + BackendConfig.speechPath,
+      );
+    });
+
     test('adds speakerLabels to the audio WebSocket URL', () {
       final uri = BackendConfig.audioUri(
         sessionId: 'session',
@@ -440,6 +574,16 @@ class _FakeCompromiseSoundPlayer implements CompromiseSoundPlayer {
     playCount++;
     return Future.value();
   }
+
+  @override
+  Future<void> dispose() => Future.value();
+}
+
+class _FakeRefVoice implements RefVoice {
+  final List<String> spoken = [];
+
+  @override
+  Future<void> speak(String text) async => spoken.add(text);
 
   @override
   Future<void> dispose() => Future.value();

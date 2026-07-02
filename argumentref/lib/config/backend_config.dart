@@ -19,6 +19,22 @@ class BackendConfig {
   /// The audio-ingestion WebSocket path served by the backend.
   static const String audioPath = '/v1/audio';
 
+  /// The same backend over plain HTTP(S), derived from [wsOrigin] so a single
+  /// `--dart-define=ARGUMENTREF_WS_URL=…` points both the audio socket and the
+  /// REST endpoints (health, history, speech) at the same host.
+  static String get httpOrigin {
+    if (wsOrigin.startsWith('wss://')) return 'https://${wsOrigin.substring(6)}';
+    if (wsOrigin.startsWith('ws://')) return 'http://${wsOrigin.substring(5)}';
+    return wsOrigin;
+  }
+
+  /// The ElevenLabs text-to-speech endpoint (`POST /v1/speech`) the referee uses
+  /// to read its live guidance aloud.
+  static const String speechPath = '/v1/speech';
+
+  /// Full URL for the referee voice endpoint.
+  static Uri speechUri() => Uri.parse('$httpOrigin$speechPath');
+
   /// Builds the full audio-ingestion URL with the query params the backend reads
   /// in `audioFormatFromUrl` (encoding / sampleRateHz / channels) plus the
   /// session + participant identifiers.

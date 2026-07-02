@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 import '../audio/compromise_sound_player.dart';
 import '../audio/live_ref_controller.dart';
 import '../audio/ref_events.dart';
+import '../audio/ref_voice.dart';
 import '../ui/ref_theme.dart';
 import 'beats.dart';
 import 'referee.dart';
@@ -116,8 +117,12 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             leftName: widget.leftName,
             rightName: widget.rightName,
             compromiseSoundPlayer: RefereeWhistlePlayer(),
+            voice: ElevenLabsRefVoice(),
           );
       _live = controller;
+      // The conversation is where the ref speaks — read the "the ref says"
+      // bubble aloud (calibration leaves this off so it stays quiet).
+      controller.voiceEnabled = true;
       controller.addListener(_onLive);
       // Fire-and-forget: status/errors surface through the controller's state.
       unawaited(controller.start());
@@ -307,11 +312,11 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     return AnimatedContainer(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
-      height: hasSuggestions ? 218 : 62,
+      height: hasSuggestions ? _compromisePanelHeight(context) : 62,
       margin: const EdgeInsets.fromLTRB(22, 4, 22, 0),
       padding:
           hasSuggestions
-              ? const EdgeInsets.fromLTRB(12, 10, 12, 12)
+              ? const EdgeInsets.fromLTRB(14, 12, 14, 14)
               : const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: RefPalette.cream,
@@ -362,12 +367,12 @@ class _CenterRefScreenState extends State<CenterRefScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 7),
+                  const SizedBox(height: 10),
                   Expanded(
                     child: ListView.separated(
                       padding: EdgeInsets.zero,
                       itemCount: suggestions.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 6),
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
                       itemBuilder:
                           (context, index) =>
                               _compromiseTile(suggestions[index]),
@@ -382,82 +387,156 @@ class _CenterRefScreenState extends State<CenterRefScreen>
     final color = _compromiseColor(suggestion);
     final urgent = suggestion.shouldPushHard;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-      decoration: BoxDecoration(
+    return Semantics(
+      button: true,
+      label: 'Open details for ${suggestion.title}',
+      child: Material(
         color: color.withValues(alpha: urgent ? 0.14 : 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: color.withValues(alpha: urgent ? 0.42 : 0.18),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 26,
-            height: 26,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Text(
-              '${suggestion.rank}',
-              style: zilla(
-                size: 14,
-                weight: FontWeight.w700,
-                color: RefPalette.cream,
-                height: 1,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: RefHaptics.wrap(
+            () => _showCompromiseDetails(suggestion),
+            haptic: RefHaptic.selection,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 78),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '${suggestion.rank}',
+                      style: zilla(
+                        size: 16,
+                        weight: FontWeight.w700,
+                        color: RefPalette.cream,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                suggestion.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: zilla(
+                                  size: urgent ? 16.5 : 15.5,
+                                  weight: FontWeight.w700,
+                                  color: RefPalette.ink,
+                                  height: 1.05,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _compromiseLabel(suggestion),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                                style: mulish(
+                                  size: 10,
+                                  weight: FontWeight.w900,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          suggestion.summary,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: mulish(
+                            size: 12.3,
+                            weight: FontWeight.w600,
+                            color: RefPalette.ink.withValues(alpha: 0.68),
+                            height: 1.18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 19,
+                    color: color.withValues(alpha: 0.7),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        suggestion.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: zilla(
-                          size: urgent ? 15 : 14,
-                          weight: FontWeight.w700,
-                          color: RefPalette.ink,
-                          height: 1.05,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _compromiseLabel(suggestion),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: mulish(
-                        size: 9.5,
-                        weight: FontWeight.w900,
-                        color: color,
-                      ),
-                    ),
-                  ],
+        ),
+      ),
+    );
+  }
+
+  double _compromisePanelHeight(BuildContext context) {
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    return math.min(292.0, math.max(226.0, screenHeight * 0.34));
+  }
+
+  void _showCompromiseDetails(CompromiseSuggestion suggestion) {
+    final color = _compromiseColor(suggestion);
+    final label = _compromiseLabel(suggestion);
+
+    unawaited(
+      showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: 'Close compromise details',
+        barrierColor: RefPalette.ink.withValues(alpha: 0.34),
+        transitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (dialogContext, _, _) {
+          final height = MediaQuery.sizeOf(dialogContext).height;
+          return SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: _CompromiseDetailsModal(
+                  suggestion: suggestion,
+                  color: color,
+                  label: label,
+                  maxHeight: math.max(260, height - 44),
+                  onClose: () => Navigator.of(dialogContext).pop(),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  suggestion.summary,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: mulish(
-                    size: 11.5,
-                    weight: FontWeight.w600,
-                    color: RefPalette.ink.withValues(alpha: 0.68),
-                    height: 1.15,
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          );
+        },
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          final eased = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return FadeTransition(
+            opacity: eased,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.96, end: 1).animate(eased),
+              child: child,
+            ),
+          );
+        },
       ),
     );
   }
@@ -504,6 +583,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
               color: RefPalette.green,
               active: _beat.active == Speaker.left,
               ping: _ping,
+              roomTone: _roomToneFor(Speaker.left),
             ),
           ),
           Positioned(
@@ -515,6 +595,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
               color: RefPalette.orange,
               active: _beat.active == Speaker.right,
               ping: _ping,
+              roomTone: _roomToneFor(Speaker.right),
             ),
           ),
           Align(
@@ -547,6 +628,14 @@ class _CenterRefScreenState extends State<CenterRefScreen>
         ],
       ),
     );
+  }
+
+  RoomToneStatus? _roomToneFor(Speaker speaker) {
+    final tone = _live?.roomTone;
+    if (tone == null || !tone.hasAiSignal || tone.speaker != speaker) {
+      return null;
+    }
+    return tone;
   }
 
   /// The wave tints toward whoever holds the floor, flushing red when the ref
@@ -606,12 +695,15 @@ class _CenterRefScreenState extends State<CenterRefScreen>
         children: [
           _flowBalance(),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _cutInsTile()),
-              const SizedBox(width: 10),
-              Expanded(child: _roomToneTile()),
-            ],
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _cutInsTile()),
+                const SizedBox(width: 10),
+                Expanded(child: _roomToneTile()),
+              ],
+            ),
           ),
         ],
       ),
@@ -664,13 +756,22 @@ class _CenterRefScreenState extends State<CenterRefScreen>
       return _simpleCutInsTile(_cut);
     }
 
-    final latest = stats.latest;
-    final latestLabel =
-        latest == null
-            ? 'No clear direction yet'
-            : '${_speakerName(latest.interrupter)} cut ${_speakerName(latest.interrupted)}';
+    return _directionalCutInsTile(
+      leftCutRight: stats.leftCutRight,
+      rightCutLeft: stats.rightCutLeft,
+      latest: stats.latest,
+    );
+  }
+
+  Widget _directionalCutInsTile({
+    required int leftCutRight,
+    required int rightCutLeft,
+    InterruptionIncident? latest,
+  }) {
+    final latestInterrupter = latest?.interrupter;
 
     return Container(
+      key: const ValueKey('center-ref-cut-ins-tile'),
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
         color: RefPalette.red.withValues(alpha: 0.1),
@@ -688,46 +789,19 @@ class _CenterRefScreenState extends State<CenterRefScreen>
               color: RefPalette.red,
             ),
           ),
-          const SizedBox(height: 2),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${stats.total}',
-                style: zilla(
-                  size: 22,
-                  weight: FontWeight.w700,
-                  color: RefPalette.red,
-                  height: 1,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  latestLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: mulish(
-                    size: 10,
-                    weight: FontWeight.w800,
-                    color: RefPalette.ink.withValues(alpha: 0.52),
-                    height: 1.05,
-                  ),
-                ),
-              ),
-            ],
-          ),
           const SizedBox(height: 7),
           _cutInDirection(
-            '${widget.leftName} cut ${widget.rightName}',
-            stats.leftCutRight,
+            '${widget.leftName} cut off ${widget.rightName}',
+            leftCutRight,
             RefPalette.green,
+            isLatest: latestInterrupter == Speaker.left,
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 5),
           _cutInDirection(
-            '${widget.rightName} cut ${widget.leftName}',
-            stats.rightCutLeft,
+            '${widget.rightName} cut off ${widget.leftName}',
+            rightCutLeft,
             RefPalette.orange,
+            isLatest: latestInterrupter == Speaker.right,
           ),
         ],
       ),
@@ -735,40 +809,21 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   }
 
   Widget _simpleCutInsTile(int total) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-      decoration: BoxDecoration(
-        color: RefPalette.red.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'CUT-INS',
-            style: mulish(
-              size: 10,
-              weight: FontWeight.w700,
-              letterSpacing: 10 * 0.12,
-              color: RefPalette.red,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '$total',
-            style: zilla(
-              size: 22,
-              weight: FontWeight.w700,
-              color: RefPalette.red,
-              height: 1,
-            ),
-          ),
-        ],
-      ),
+    final rightCutLeft = (total / 2).ceil();
+    final leftCutRight = total - rightCutLeft;
+
+    return _directionalCutInsTile(
+      leftCutRight: leftCutRight,
+      rightCutLeft: rightCutLeft,
     );
   }
 
-  Widget _cutInDirection(String label, int count, Color color) {
+  Widget _cutInDirection(
+    String label,
+    int count,
+    Color color, {
+    bool isLatest = false,
+  }) {
     return Row(
       children: [
         Expanded(
@@ -777,33 +832,37 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: mulish(
-              size: 10.2,
-              weight: FontWeight.w700,
-              color: RefPalette.ink.withValues(alpha: 0.58),
+              size: 10.5,
+              weight: FontWeight.w800,
+              color: RefPalette.ink.withValues(alpha: isLatest ? 0.76 : 0.58),
               height: 1.05,
             ),
           ),
         ),
-        const SizedBox(width: 6),
-        Text(
-          '$count',
-          style: zilla(
-            size: 14,
-            weight: FontWeight.w700,
-            color: color,
-            height: 1,
+        const SizedBox(width: 8),
+        Container(
+          width: 28,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: isLatest ? 0.2 : 0.11),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: color.withValues(alpha: isLatest ? 0.34 : 0.12),
+            ),
+          ),
+          child: Text(
+            '$count',
+            style: zilla(
+              size: 17,
+              weight: FontWeight.w700,
+              color: color,
+              height: 1,
+            ),
           ),
         ),
       ],
     );
-  }
-
-  String _speakerName(Speaker speaker) {
-    return switch (speaker) {
-      Speaker.left => widget.leftName,
-      Speaker.right => widget.rightName,
-      Speaker.none => 'Someone',
-    };
   }
 
   Widget _roomToneTile() {
@@ -826,6 +885,7 @@ class _CenterRefScreenState extends State<CenterRefScreen>
             : RefPalette.olive;
 
     return Container(
+      key: const ValueKey('center-ref-room-tone-tile'),
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
         color: color.withValues(alpha: tone.isHeated ? 0.12 : 0.16),
@@ -886,6 +946,279 @@ class _CenterRefScreenState extends State<CenterRefScreen>
   }
 }
 
+class _CompromiseDetailsModal extends StatelessWidget {
+  const _CompromiseDetailsModal({
+    required this.suggestion,
+    required this.color,
+    required this.label,
+    required this.maxHeight,
+    required this.onClose,
+  });
+
+  final CompromiseSuggestion suggestion;
+  final Color color;
+  final String label;
+  final double maxHeight;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final boundedHeight = math.min(620.0, math.max(260.0, maxHeight));
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: 430, maxHeight: boundedHeight),
+      child: Material(
+        color: RefPalette.cream,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: RefPalette.ink.withValues(alpha: 0.14)),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: RefPalette.ink.withValues(alpha: 0.16),
+                blurRadius: 28,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${suggestion.rank}',
+                        style: zilla(
+                          size: 20,
+                          weight: FontWeight.w700,
+                          color: RefPalette.cream,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            suggestion.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: zilla(
+                              size: 24,
+                              weight: FontWeight.w700,
+                              color: RefPalette.ink,
+                              height: 1.05,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$label / ${suggestion.score}/100',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: mulish(
+                              size: 11,
+                              weight: FontWeight.w900,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _closeButton(),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _detailSection('THE OFFER', suggestion.summary),
+                        const SizedBox(height: 16),
+                        _detailSection(
+                          'WHY IT COULD WORK',
+                          suggestion.whyItCouldWork,
+                        ),
+                        const SizedBox(height: 18),
+                        _scoreBar(),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _metric(
+                                'QUALITY',
+                                _qualityText(suggestion.quality),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: _metric(
+                                'PUSH LEVEL',
+                                _pushLevelText(suggestion.pushLevel),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _closeButton() {
+    return Semantics(
+      button: true,
+      label: 'Close compromise details',
+      child: Material(
+        color: RefPalette.ink.withValues(alpha: 0.06),
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: RefHaptics.wrap(onClose),
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Icon(
+              Icons.close_rounded,
+              size: 21,
+              color: RefPalette.ink.withValues(alpha: 0.58),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailSection(String title, String body) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: mulish(size: 10.5, weight: FontWeight.w900, color: color),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          body,
+          style: mulish(
+            size: 15,
+            weight: FontWeight.w600,
+            color: RefPalette.ink.withValues(alpha: 0.78),
+            height: 1.3,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _scoreBar() {
+    final score = (suggestion.score / 100).clamp(0.0, 1.0).toDouble();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'SCORE',
+              style: mulish(size: 10.5, weight: FontWeight.w900, color: color),
+            ),
+            Text(
+              '${suggestion.score}/100',
+              style: zilla(
+                size: 18,
+                weight: FontWeight.w700,
+                color: color,
+                height: 1,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(5),
+          child: Container(
+            height: 8,
+            color: RefPalette.ink.withValues(alpha: 0.1),
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: score,
+              child: ColoredBox(color: color),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _metric(String title, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: mulish(size: 10.5, weight: FontWeight.w900, color: color),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: zilla(
+            size: 17,
+            weight: FontWeight.w700,
+            color: RefPalette.ink,
+            height: 1.05,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _qualityText(CompromiseQuality quality) {
+    return switch (quality) {
+      CompromiseQuality.reallyGood => 'Really good',
+      CompromiseQuality.strong => 'Strong',
+      CompromiseQuality.promising => 'Promising',
+      CompromiseQuality.weak => 'Early',
+    };
+  }
+
+  String _pushLevelText(CompromisePushLevel pushLevel) {
+    return switch (pushLevel) {
+      CompromisePushLevel.urgent => 'Urgent',
+      CompromisePushLevel.firm => 'Firm',
+      CompromisePushLevel.normal => 'Normal',
+    };
+  }
+}
+
 /// A speaker chip that orbits the referee — dims when off the floor, brightens
 /// and pings with a concentric ring when it holds the floor.
 class _Speaker extends StatelessWidget {
@@ -895,6 +1228,7 @@ class _Speaker extends StatelessWidget {
     required this.color,
     required this.active,
     required this.ping,
+    this.roomTone,
   });
 
   final String initial;
@@ -902,78 +1236,173 @@ class _Speaker extends StatelessWidget {
   final Color color;
   final bool active;
   final Animation<double> ping;
+  final RoomToneStatus? roomTone;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: active ? 1.06 : 1.0,
-      duration: const Duration(milliseconds: 450),
-      curve: Curves.easeOut,
-      child: AnimatedOpacity(
-        opacity: active ? 1.0 : 0.45,
-        duration: const Duration(milliseconds: 450),
-        child: Column(
-          children: [
-            SizedBox(
-              width: 52,
-              height: 52,
-              child: Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
+    final tone = roomTone;
+    final hasTone = tone != null;
+    final toneColor =
+        tone == null
+            ? color
+            : tone.isHeated
+            ? RefPalette.red
+            : tone.isRepairing
+            ? RefPalette.green
+            : RefPalette.olive;
+    final pulsing = tone?.isHeated ?? false;
+
+    return AnimatedBuilder(
+      animation: ping,
+      builder: (context, _) {
+        final pulse = Curves.easeInOut.transform(ping.value);
+        final ringAlpha =
+            !hasTone
+                ? 0.0
+                : pulsing
+                ? 0.36 + 0.3 * pulse
+                : 0.32;
+        final fillAlpha =
+            !hasTone
+                ? 0.0
+                : pulsing
+                ? 0.08 + 0.08 * pulse
+                : 0.1;
+        final glowAlpha =
+            !hasTone
+                ? 0.0
+                : pulsing
+                ? 0.18 + 0.22 * pulse
+                : 0.12;
+
+        return AnimatedScale(
+          scale:
+              active
+                  ? 1.06
+                  : hasTone
+                  ? 1.03
+                  : 1.0,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOut,
+          child: AnimatedOpacity(
+            opacity: active || hasTone ? 1.0 : 0.45,
+            duration: const Duration(milliseconds: 450),
+            child: Container(
+              key: hasTone ? ValueKey('speaker-room-tone-$name') : null,
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
+              decoration: BoxDecoration(
+                color:
+                    hasTone
+                        ? toneColor.withValues(alpha: fillAlpha)
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+                border:
+                    hasTone
+                        ? Border.all(
+                          color: toneColor.withValues(alpha: ringAlpha),
+                          width: pulsing ? 2.2 + 1.2 * pulse : 1.6,
+                        )
+                        : null,
+                boxShadow:
+                    hasTone
+                        ? [
+                          BoxShadow(
+                            color: toneColor.withValues(alpha: glowAlpha),
+                            blurRadius: pulsing ? 18 + 12 * pulse : 14,
+                            spreadRadius: pulsing ? 2 + 3 * pulse : 1,
+                          ),
+                        ]
+                        : const [],
+              ),
+              child: Column(
                 children: [
-                  if (active)
-                    Positioned(
-                      left: -7,
-                      top: -7,
-                      right: -7,
-                      bottom: -7,
-                      child: AnimatedBuilder(
-                        animation: ping,
-                        builder: (context, _) {
-                          final v = ping.value;
-                          final scale =
-                              0.65 + (1.9 - 0.65) * Curves.easeOut.transform(v);
-                          final opacity = v < 0.8 ? 0.5 * (1 - v / 0.8) : 0.0;
-                          return Transform.scale(
-                            scale: scale,
-                            child: Opacity(
-                              opacity: opacity,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: color, width: 2),
+                  SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.center,
+                      children: [
+                        if (active)
+                          Positioned(
+                            left: -7,
+                            top: -7,
+                            right: -7,
+                            bottom: -7,
+                            child: Transform.scale(
+                              scale:
+                                  0.65 +
+                                  (1.9 - 0.65) *
+                                      Curves.easeOut.transform(ping.value),
+                              child: Opacity(
+                                opacity:
+                                    ping.value < 0.8
+                                        ? 0.5 * (1 - ping.value / 0.8)
+                                        : 0.0,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: color, width: 2),
+                                  ),
                                 ),
                               ),
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  Container(
-                    width: 52,
-                    height: 52,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      initial,
-                      style: zilla(
-                        size: 22,
-                        weight: FontWeight.w700,
-                        color: RefPalette.cream,
-                      ),
+                          ),
+                        Container(
+                          width: 52,
+                          height: 52,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            initial,
+                            style: zilla(
+                              size: 22,
+                              weight: FontWeight.w700,
+                              color: RefPalette.cream,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  Text(name, style: zilla(size: 14, weight: FontWeight.w600)),
+                  if (hasTone) ...[
+                    const SizedBox(height: 5),
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 88),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: toneColor.withValues(
+                          alpha: pulsing ? 0.92 : 0.18,
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        tone.label.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: mulish(
+                          size: 9,
+                          weight: FontWeight.w900,
+                          color: pulsing ? RefPalette.cream : toneColor,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(name, style: zilla(size: 14, weight: FontWeight.w600)),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

@@ -43,6 +43,10 @@ dependencies:
   web_socket_channel: ^3.0.1
   audioplayers: ^6.6.0
 
+  # Fetches ElevenLabs referee speech from the backend POST /v1/speech endpoint
+  # so the ref can read its live guidance aloud.
+  http: ^1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

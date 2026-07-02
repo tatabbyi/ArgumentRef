@@ -7,6 +7,7 @@ import '../center_ref/beats.dart';
 import 'audio_session.dart';
 import 'compromise_sound_player.dart';
 import 'ref_events.dart';
+import 'ref_voice.dart';
 
 /// One finalised line of conversation, tagged with the speaker chair we mapped
 /// it to.
@@ -28,6 +29,7 @@ class RoomToneStatus {
     required this.isHeated,
     required this.isRepairing,
     required this.hasAiSignal,
+    this.speaker = Speaker.none,
   });
 
   final String label;
@@ -37,6 +39,7 @@ class RoomToneStatus {
   final bool isHeated;
   final bool isRepairing;
   final bool hasAiSignal;
+  final Speaker speaker;
 
   double get waveLevel {
     final volumeEnergy = 0.18 + loudness * 0.72;
@@ -95,6 +98,9 @@ class LiveRefController extends ChangeNotifier {
     String? sessionId,
     String? participantId,
     CompromiseSoundPlayer? compromiseSoundPlayer,
+    RefVoice? voice,
+    Duration? voiceCooldown,
+    Duration? voiceSettle,
   }) : session =
            session ??
            AudioSession(
@@ -103,7 +109,10 @@ class LiveRefController extends ChangeNotifier {
              speakerLabels: [leftName, rightName],
            ),
        _compromiseSoundPlayer =
-           compromiseSoundPlayer ?? const SilentCompromiseSoundPlayer() {
+           compromiseSoundPlayer ?? const SilentCompromiseSoundPlayer(),
+       _voice = voice ?? const SilentRefVoice(),
+       _voiceCooldown = voiceCooldown ?? const Duration(seconds: 7),
+       _voiceSettle = voiceSettle ?? const Duration(milliseconds: 1400) {
     this.session.loudnessListenable.addListener(_onLoudnessChanged);
   }
 
@@ -111,6 +120,21 @@ class LiveRefController extends ChangeNotifier {
   final String rightName;
   final AudioSession session;
   final CompromiseSoundPlayer _compromiseSoundPlayer;
+  final RefVoice _voice;
+
+  /// Minimum gap between two spoken referee calls, so the ref never rattles off
+  /// guidance back-to-back.
+  final Duration _voiceCooldown;
+
+  /// How long the floor must be quiet before the ref speaks — it waits for a
+  /// natural break rather than talking over whoever holds the floor.
+  final Duration _voiceSettle;
+
+  /// When true, the ref reads its live *interventions* (the "the ref says"
+  /// bubble, when it's a real call — a cut-in flag or a compromise, not routine
+  /// turn cues) aloud through [_voice]. Off by default so calibration stays
+  /// silent; the conversation screen turns it on once the real session begins.
+  bool voiceEnabled = false;
 
   static const int _idleGapMs = 2200; // silence before the floor goes empty
   static const int _cutInWindowMs = 800; // overlap tight enough to be a cut-in
@@ -151,12 +175,15 @@ class LiveRefController extends ChangeNotifier {
   final List<TranscriptLine> _lines = [];
   final List<CompromiseSuggestion> _compromises = [];
   RoomToneAnalyzedEvent? _roomToneAnalysis;
+  Speaker _roomToneSpeaker = Speaker.none;
   InterruptionIncident? _latestInterruption;
   String _partialText = '';
   Speaker _partialSpeaker = Speaker.none;
   String? _lastWhistledCompromiseId;
 
   String _signature = '';
+  String _lastVoicedCaption = '';
+  DateTime _lastVoicedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // ── public surface read by the screen ────────────────────────────────────
 
@@ -283,6 +310,7 @@ class LiveRefController extends ChangeNotifier {
       isHeated: heated || loudness >= 0.86,
       isRepairing: repairing,
       hasAiSignal: true,
+      speaker: _roomToneSpeaker,
     );
   }
 
@@ -367,11 +395,14 @@ class LiveRefController extends ChangeNotifier {
     _compromiseError = null;
     _lastWhistledCompromiseId = null;
     _roomToneAnalysis = null;
+    _roomToneSpeaker = Speaker.none;
     _roomToneDisabled = false;
     _roomToneError = null;
     _partialText = '';
     _partialSpeaker = Speaker.none;
     _signature = '';
+    _lastVoicedCaption = '';
+    _lastVoicedAt = DateTime.fromMillisecondsSinceEpoch(0);
     _refresh();
   }
 
@@ -386,6 +417,7 @@ class LiveRefController extends ChangeNotifier {
     session.statusListenable.removeListener(_onStatusChanged);
     session.loudnessListenable.removeListener(_onLoudnessChanged);
     unawaited(_compromiseSoundPlayer.dispose());
+    unawaited(_voice.dispose());
     unawaited(session.dispose());
     super.dispose();
   }
@@ -530,6 +562,10 @@ class LiveRefController extends ChangeNotifier {
   }
 
   void _handleRoomTone(RoomToneAnalyzedEvent event) {
+    _roomToneSpeaker = _resolveSpeaker(
+      event.speaker,
+      speakerLabel: event.speakerLabel,
+    );
     _roomToneAnalysis = event;
     _roomToneDisabled = false;
     _roomToneError = null;
@@ -628,12 +664,54 @@ class LiveRefController extends ChangeNotifier {
         '$_partialSpeaker:$_partialText|${_lines.length}|'
         '${top?.id}:${top?.score}|$_compromisesDisabled|$_compromiseError|'
         '${tone?.lineNumber}.${tone?.sentenceIndex}:${tone?.dominantTone}:'
-        '${tone?.intensity}|$_roomToneDisabled|$_roomToneError|'
+        '${tone?.intensity}:$_roomToneSpeaker|$_roomToneDisabled|$_roomToneError|'
         '$loudnessBucket';
     if (sig == _signature) return;
     _signature = sig;
+    _maybeVoiceCaption();
     notifyListeners();
   }
+
+  /// Reads the ref's live *intervention* aloud — but only when it's a real call
+  /// and the room gives it room to speak.
+  ///
+  /// Three guards keep it from talking over the conversation:
+  /// 1. **What** — only intervention moods (a cut-in flag, or a compromise) are
+  ///    voiced; the routine "Go on, X" / "Your turn, Y" turn cues stay on-screen
+  ///    only, so the ref isn't narrating every hand-off.
+  /// 2. **When** — it waits for a natural break ([_voiceSettle] of quiet) rather
+  ///    than cutting across whoever currently holds the floor.
+  /// 3. **How often** — a [_voiceCooldown] between calls so it never rattles off
+  ///    guidance back-to-back.
+  void _maybeVoiceCaption() {
+    if (!voiceEnabled) return;
+
+    final current = beat;
+    if (!_isVoiceableMood(current.mood)) return;
+
+    final spoken = current.caption
+        .replaceAll('{L}', leftName)
+        .replaceAll('{R}', rightName);
+    if (spoken.isEmpty || spoken == _lastVoicedCaption) return;
+
+    final now = DateTime.now();
+    // Hold until there's a lull — the active speaker has paused (or the floor is
+    // idle) — so the ref slips its call into a natural break.
+    final quietFor = now.difference(_lastActivityAt);
+    if (!_idle && quietFor < _voiceSettle) return;
+    if (now.difference(_lastVoicedAt) < _voiceCooldown) return;
+
+    _lastVoicedCaption = spoken;
+    _lastVoicedAt = now;
+    unawaited(_voice.speak(spoken));
+  }
+
+  /// The ref only speaks when it actually has a call to make: a cut-in flag
+  /// ([Mood.concern]) or a compromise worth surfacing ([Mood.alert] /
+  /// [Mood.approve]). Everything else ([Mood.listen] turn cues, warming/idle
+  /// filler) is shown but not read aloud.
+  static bool _isVoiceableMood(Mood mood) =>
+      mood == Mood.concern || mood == Mood.alert || mood == Mood.approve;
 
   static String _generateId(String prefix) {
     final ts = DateTime.now().microsecondsSinceEpoch;

@@ -154,6 +154,19 @@ class _HeadParts extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
+          // Face sits under the cap so the hat reads as resting on the head.
+          Positioned(
+            left: 36,
+            top: 34,
+            child: Container(
+              width: 128,
+              height: 128,
+              decoration: const BoxDecoration(
+                color: RefPalette.skin,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
           // Cap crown.
           Positioned(
             left: 44,
@@ -193,19 +206,6 @@ class _HeadParts extends StatelessWidget {
               width: 112,
               height: 9,
               child: ColoredBox(color: RefPalette.orange),
-            ),
-          ),
-          // Face.
-          Positioned(
-            left: 36,
-            top: 34,
-            child: Container(
-              width: 128,
-              height: 128,
-              decoration: const BoxDecoration(
-                color: RefPalette.skin,
-                shape: BoxShape.circle,
-              ),
             ),
           ),
           // Cap band.

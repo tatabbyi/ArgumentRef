@@ -67,7 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     geminiModel: env.GEMINI_MODEL ?? 'gemini-3.5-flash',
     roomToneGeminiModel:
       env.ROOM_TONE_GEMINI_MODEL ?? 'gemini-3.1-flash-lite',
-    compromiseInitialDelayMs: readNumber(env.COMPROMISE_INITIAL_DELAY_MS, 30_000),
+    compromiseInitialDelayMs: readNumber(env.COMPROMISE_INITIAL_DELAY_MS, 20_000),
     compromiseIntervalMs: readNumber(env.COMPROMISE_INTERVAL_MS, 30_000),
     fallacyDetectionEnabled: readBoolean(env.FALLACY_DETECTION_ENABLED, true),
     fallacyAnalysisIntervalMs: readNumber(env.FALLACY_ANALYSIS_INTERVAL_MS, 20_000),
