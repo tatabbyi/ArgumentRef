@@ -1,3 +1,5 @@
+import '../models/referee_settings.dart';
+
 /// Where the live referee streams microphone audio.
 ///
 /// Defaults to the deployed Render backend. Point it somewhere else for local
@@ -36,14 +38,16 @@ class BackendConfig {
   static Uri speechUri() => Uri.parse('$httpOrigin$speechPath');
 
   /// Builds the full audio-ingestion URL with the query params the backend reads
-  /// in `audioFormatFromUrl` (encoding / sampleRateHz / channels) plus the
-  /// session + participant identifiers.
+  /// in `audioFormatFromUrl` (encoding / sampleRateHz / channels), the session +
+  /// participant identifiers, and the referee tuning the backend reads in
+  /// `parseRefereeSettingsFromUrl`.
   static Uri audioUri({
     required String sessionId,
     required String participantId,
     required int sampleRateHz,
     required int channels,
     List<String> speakerLabels = const [],
+    RefereeSettings refereeSettings = RefereeSettings.defaults,
   }) {
     final labels = speakerLabels
         .map((label) => label.trim())
@@ -57,6 +61,7 @@ class BackendConfig {
         'sampleRateHz': '$sampleRateHz',
         'channels': '$channels',
         if (labels.isNotEmpty) 'speakerLabels': labels.join(','),
+        ...refereeSettings.toQueryParameters(),
       },
     );
   }

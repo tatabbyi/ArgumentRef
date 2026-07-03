@@ -4,10 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../center_ref/beats.dart';
+import '../models/referee_settings.dart';
 import 'audio_session.dart';
 import 'compromise_sound_player.dart';
 import 'ref_events.dart';
 import 'ref_voice.dart';
+import 'shouting_detector.dart';
 
 /// One finalised line of conversation, tagged with the speaker chair we mapped
 /// it to.
@@ -97,6 +99,7 @@ class LiveRefController extends ChangeNotifier {
     AudioSession? session,
     String? sessionId,
     String? participantId,
+    RefereeSettings refereeSettings = RefereeSettings.defaults,
     CompromiseSoundPlayer? compromiseSoundPlayer,
     TimeOutSoundPlayer? timeOutSoundPlayer,
     RefVoice? voice,
@@ -109,6 +112,7 @@ class LiveRefController extends ChangeNotifier {
              sessionId: sessionId ?? _generateId('sess'),
              participantId: participantId ?? _generateId('phone'),
              speakerLabels: [leftName, rightName],
+             refereeSettings: refereeSettings,
            ),
        _compromiseSoundPlayer =
            compromiseSoundPlayer ?? const SilentCompromiseSoundPlayer(),
@@ -147,8 +151,6 @@ class LiveRefController extends ChangeNotifier {
   static const int _cutInWindowMs = 800; // overlap tight enough to be a cut-in
   static const int _concernHoldMs = 2600; // how long the ref stays flagged
   static const int _maxLines = 60;
-  static const double _shoutingStartLoudness = 0.82;
-  static const double _shoutingStopLoudness = 0.56;
   static const Duration _timeOutTriggerDuration = Duration(seconds: 6);
   static const Duration _twoSpeakerShoutingWindow = Duration(seconds: 8);
 
@@ -169,6 +171,12 @@ class LiveRefController extends ChangeNotifier {
   DateTime _lastRightHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _shoutingStartedAt;
   bool _hasHeardAnything = false;
+
+  /// Baseline-relative loudness detector ported from `voice_analysis_proto`.
+  /// Decides whether the room is *shouting* (loud relative to its own learned
+  /// normal), which — paired with both chairs being active — is what a two-way
+  /// shouting match looks like.
+  final ShoutingDetector _shoutingDetector = ShoutingDetector();
 
   bool _idle = true;
   bool _concerned = false;
@@ -414,6 +422,7 @@ class LiveRefController extends ChangeNotifier {
     _lastLeftHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
     _lastRightHeardAt = DateTime.fromMillisecondsSinceEpoch(0);
     _shoutingStartedAt = null;
+    _shoutingDetector.reset();
     _hasHeardAnything = false;
     _idle = true;
     _concerned = false;
@@ -775,16 +784,20 @@ class LiveRefController extends ChangeNotifier {
       mood == Mood.concern || mood == Mood.alert || mood == Mood.approve;
 
   void _updateTimeOutState(DateTime now) {
-    final loudness = session.loudnessLevel;
+    // The ported detector decides "is this loud *for this room*?" from the live
+    // loudness; the both-speakers-recent gate turns that into "are the two of
+    // them shouting *at each other*?".
+    final shoutingNow = _shoutingDetector.classify(session.loudnessLevel);
+
     if (_timeOutActive) {
-      if (loudness < _shoutingStopLoudness) {
+      if (!shoutingNow) {
         _shoutingStartedAt = null;
         _setTimeOutActive(false);
       }
       return;
     }
 
-    if (loudness < _shoutingStartLoudness || !_bothSpeakersRecent(now)) {
+    if (!shoutingNow || !_bothSpeakersRecent(now)) {
       _shoutingStartedAt = null;
       return;
     }

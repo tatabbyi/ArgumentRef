@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:remote-audio": "tsx scripts/streamAudioFile.ts"
+    "test:remote-audio": "tsx scripts/streamAudioFile.ts",
+    "test:speakers": "tsx scripts/liveSpeakerTest.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

@@ -74,11 +74,14 @@ class RefereeWhistlePlayer implements CompromiseSoundPlayer {
   }
 }
 
-class LongWhiteTimeOutPlayer implements TimeOutSoundPlayer {
-  LongWhiteTimeOutPlayer({AudioPlayer? player})
+/// Blows the long referee whistle when the ref calls a time-out on a two-way
+/// shouting match. Loops the whistle while they stay heated and stops it once
+/// the room calms down.
+class LongWhistleTimeOutPlayer implements TimeOutSoundPlayer {
+  LongWhistleTimeOutPlayer({AudioPlayer? player})
     : _player = player ?? AudioPlayer();
 
-  static const assetPath = 'audio/long_white.mp3';
+  static const assetPath = 'audio/long_whistle.mp3';
 
   final AudioPlayer _player;
   bool _disposed = false;

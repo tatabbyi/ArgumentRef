@@ -126,6 +126,18 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     roomToneGeminiModel: 'gemini-3.1-flash-lite',
     compromiseInitialDelayMs: 30_000,
     compromiseIntervalMs: 30_000,
+    fallacyDetectionEnabled: false,
+    fallacyAnalysisIntervalMs: 20_000,
+    fallacyMinConfidence: 'medium',
+    argumentRatingEnabled: false,
+    argumentRatingIntervalMs: 30_000,
+    argumentRatingMinTranscriptLines: 4,
+    refereeInterventionsEnabled: false,
+    refereeInterventionCooldownMs: 10_000,
+    elevenLabsVoiceId: 'test-voice',
+    elevenLabsModelId: 'eleven_multilingual_v2',
+    elevenLabsOutputFormat: 'mp3_44100_128',
+    elevenLabsMaxTextChars: 600,
     ...overrides,
   };
 }

@@ -70,7 +70,8 @@ flutter:
   uses-material-design: true
 
   # Add referee sounds at assets/audio/referee_whistle.mp3 and
-  # assets/audio/long_white.mp3.
+  # assets/audio/long_whistle.mp3 (the long time-out whistle blown when two
+  # people are shouting at each other).
   assets:
     - assets/audio/
 

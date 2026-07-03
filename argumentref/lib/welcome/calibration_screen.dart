@@ -9,6 +9,7 @@ import '../audio/ref_voice.dart';
 import '../center_ref/center_ref_screen.dart';
 import '../center_ref/referee_guide.dart';
 import '../center_ref/volume_wave.dart';
+import '../models/referee_settings.dart';
 import '../ui/ref_theme.dart';
 
 /// A short voice-calibration step that sits between "Who's talking today?" and
@@ -24,6 +25,7 @@ class CalibrationScreen extends StatefulWidget {
     super.key,
     required this.leftName,
     required this.rightName,
+    this.refereeSettings = RefereeSettings.defaults,
   });
 
   /// First speaker (green). Reads first.
@@ -31,6 +33,10 @@ class CalibrationScreen extends StatefulWidget {
 
   /// Second speaker (orange). Reads second.
   final String rightName;
+
+  /// The user's referee tuning, applied to the live session opened here (the
+  /// same socket later handed to the conversation screen).
+  final RefereeSettings refereeSettings;
 
   @override
   State<CalibrationScreen> createState() => _CalibrationScreenState();
@@ -124,8 +130,9 @@ class _CalibrationScreenState extends State<CalibrationScreen>
     final controller = LiveRefController(
       leftName: widget.leftName,
       rightName: widget.rightName,
+      refereeSettings: widget.refereeSettings,
       compromiseSoundPlayer: RefereeWhistlePlayer(),
-      timeOutSoundPlayer: LongWhiteTimeOutPlayer(),
+      timeOutSoundPlayer: LongWhistleTimeOutPlayer(),
       // Attached now but left muted (voiceEnabled defaults to false) so the ref
       // stays quiet during calibration; the conversation screen turns it on
       // once this controller is handed off in _finish().

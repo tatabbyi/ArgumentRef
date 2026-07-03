@@ -9,6 +9,7 @@ import 'package:web_socket_channel/status.dart' as ws_status;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/backend_config.dart';
+import '../models/referee_settings.dart';
 import 'ref_events.dart';
 
 /// The lifecycle of a single live audio stream.
@@ -37,11 +38,16 @@ class AudioSession {
     this.sampleRateHz = 16000,
     this.channels = 1,
     this.speakerLabels = const [],
+    this.refereeSettings = RefereeSettings.defaults,
     AudioRecorder? recorder,
   }) : _injectedRecorder = recorder;
 
   final String sessionId;
   final String participantId;
+
+  /// The user's referee tuning, sent as query params so the backend applies it
+  /// to this session's interventions.
+  final RefereeSettings refereeSettings;
 
   /// PCM sample rate. Kept at 16 kHz mono — plenty for speech, cheap to stream,
   /// and what the backend/Deepgram config expects.
@@ -118,6 +124,7 @@ class AudioSession {
           sampleRateHz: sampleRateHz,
           channels: channels,
           speakerLabels: speakerLabels,
+          refereeSettings: refereeSettings,
         ),
       );
       _channel = channel;

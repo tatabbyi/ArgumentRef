@@ -6,6 +6,7 @@ import '../models/user_profile.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../ui/ref_theme.dart';
 import 'calibration_screen.dart';
+import 'referee_settings_screen.dart';
 
 /// The landing surface shown every time the app opens (once onboarding is done),
 /// built to the **3b "Clean & Airy"** design direction: usability-first, no
@@ -70,7 +71,27 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     // live referee.
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => CalibrationScreen(leftName: _a, rightName: _b),
+        builder: (_) => CalibrationScreen(
+          leftName: _a,
+          rightName: _b,
+          refereeSettings: updated.refereeSettings,
+        ),
+      ),
+    );
+  }
+
+  void _editRefereeSettings() {
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RefereeSettingsScreen(
+          settings: widget.profile.refereeSettings,
+          onChanged: (settings) {
+            final updated = widget.profile.copyWith(refereeSettings: settings);
+            widget.store.save(updated);
+            widget.onProfileChanged(updated);
+          },
+        ),
       ),
     );
   }
@@ -148,6 +169,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               alignment: Alignment.centerLeft,
               child: _RefChatBubble(text: 'Let’s get you both signed in.'),
             ),
+          ),
+          IconButton(
+            onPressed: RefHaptics.wrap(_editRefereeSettings),
+            icon: const Icon(Icons.sports_rounded),
+            color: RefPalette.ink.withValues(alpha: 0.55),
+            iconSize: 20,
+            tooltip: 'Tune your ref',
           ),
           IconButton(
             onPressed: RefHaptics.wrap(_editProfile),

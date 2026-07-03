@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'referee_settings.dart';
+
 /// Someone the user talks things through with, captured during onboarding.
 @immutable
 class Contact {
@@ -42,6 +44,7 @@ class UserProfile {
     this.flaws = const [],
     this.recentNames = const [],
     this.onboardingComplete = false,
+    this.refereeSettings = RefereeSettings.defaults,
   });
 
   /// The user's own name.
@@ -58,6 +61,9 @@ class UserProfile {
 
   /// Whether the one-time onboarding has been finished.
   final bool onboardingComplete;
+
+  /// How the user has tuned the live referee (style, strictness, frequency…).
+  final RefereeSettings refereeSettings;
 
   /// The empty starting profile for a brand-new install.
   static const empty = UserProfile();
@@ -89,6 +95,7 @@ class UserProfile {
     List<String>? flaws,
     List<String>? recentNames,
     bool? onboardingComplete,
+    RefereeSettings? refereeSettings,
   }) {
     return UserProfile(
       name: name ?? this.name,
@@ -96,6 +103,7 @@ class UserProfile {
       flaws: flaws ?? this.flaws,
       recentNames: recentNames ?? this.recentNames,
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
+      refereeSettings: refereeSettings ?? this.refereeSettings,
     );
   }
 
@@ -124,6 +132,7 @@ class UserProfile {
     'flaws': flaws,
     'recentNames': recentNames,
     'onboardingComplete': onboardingComplete,
+    'refereeSettings': refereeSettings.toJson(),
   };
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -136,6 +145,11 @@ class UserProfile {
       flaws: ((json['flaws'] ?? const []) as List).cast<String>(),
       recentNames: ((json['recentNames'] ?? const []) as List).cast<String>(),
       onboardingComplete: (json['onboardingComplete'] ?? false) as bool,
+      refereeSettings: json['refereeSettings'] is Map
+          ? RefereeSettings.fromJson(
+              (json['refereeSettings'] as Map).cast<String, dynamic>(),
+            )
+          : RefereeSettings.defaults,
     );
   }
 }

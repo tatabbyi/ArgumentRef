@@ -7,6 +7,7 @@ import '../audio/compromise_sound_player.dart';
 import '../audio/live_ref_controller.dart';
 import '../audio/ref_events.dart';
 import '../audio/ref_voice.dart';
+import '../models/referee_settings.dart';
 import '../ui/ref_theme.dart';
 import 'beats.dart';
 import 'referee.dart';
@@ -34,6 +35,7 @@ class CenterRefScreen extends StatefulWidget {
     this.onEnd,
     this.live = false,
     this.liveController,
+    this.refereeSettings = RefereeSettings.defaults,
   });
 
   /// The speaker on the left (green). Defaults to the prototype's "Maya".
@@ -52,6 +54,11 @@ class CenterRefScreen extends StatefulWidget {
 
   /// An already-started live pipeline, usually handed off from calibration.
   final LiveRefController? liveController;
+
+  /// Referee tuning for a live session started *by this screen* (i.e. when no
+  /// [liveController] is handed in). A handed-off controller already carries
+  /// its own settings from calibration.
+  final RefereeSettings refereeSettings;
 
   @override
   State<CenterRefScreen> createState() => _CenterRefScreenState();
@@ -120,8 +127,9 @@ class _CenterRefScreenState extends State<CenterRefScreen>
           LiveRefController(
             leftName: widget.leftName,
             rightName: widget.rightName,
+            refereeSettings: widget.refereeSettings,
             compromiseSoundPlayer: RefereeWhistlePlayer(),
-            timeOutSoundPlayer: LongWhiteTimeOutPlayer(),
+            timeOutSoundPlayer: LongWhistleTimeOutPlayer(),
             voice: ElevenLabsRefVoice(),
           );
       _live = controller;
